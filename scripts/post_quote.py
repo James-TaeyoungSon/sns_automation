@@ -92,13 +92,14 @@ def get_article_info(article_num: int) -> dict:
 def generate_content(article: dict) -> dict:
     # 3-1: Google Search ON → 실존 명언 검색 (plain text)
     search_prompt = f"""다음 뉴스 기사와 연관된 실존 인물의 실제 명언 하나를 웹에서 찾아줘.
+한국인 인물과 외국 인물 모두 포함해서 가장 어울리는 명언을 골라줘.
 
 기사 제목: {article['title']}
 
 반드시 아래 형식으로만 답해줘 (다른 설명 없이):
-QUOTE_EN: [명언 원문 영어]
-QUOTE_KO: [명언 한국어 번역]
-AUTHOR: [인물 이름]
+QUOTE_ORIGINAL: [명언 원문 (원어 그대로)]
+QUOTE_KO: [명언 한국어 번역 — 원문이 이미 한국어면 그대로]
+AUTHOR: [인물 이름 (한국어)]
 AUTHOR_INFO: [인물 한 줄 소개]"""
 
     r1 = requests.post(
@@ -118,18 +119,18 @@ AUTHOR_INFO: [인물 한 줄 소개]"""
             if line.startswith(f'{key}:'):
                 return line.split(':', 1)[1].strip()
         return ''
-    quote_en    = extract('QUOTE_EN',    quote_raw)
-    quote_ko    = extract('QUOTE_KO',    quote_raw)
-    author      = extract('AUTHOR',      quote_raw)
-    author_info = extract('AUTHOR_INFO', quote_raw)
-    print(f"[OK] 명언 검색: {quote_en[:60]}... — {author}")
+    quote_original = extract('QUOTE_ORIGINAL', quote_raw)
+    quote_ko       = extract('QUOTE_KO',       quote_raw)
+    author         = extract('AUTHOR',         quote_raw)
+    author_info    = extract('AUTHOR_INFO',    quote_raw)
+    print(f"[OK] 명언 검색: {quote_ko[:60]}... — {author}")
 
     # 3-2: Google Search OFF + response_mime_type json → 캡션/이미지 프롬프트 생성
     caption_prompt = f"""다음 뉴스 기사와 명언을 기반으로 SNS 포스팅 콘텐츠를 작성해줘.
 
 기사 제목: {article['title']}
-명언 원문: {quote_en}
-명언 번역: {quote_ko}
+명언 원문: {quote_original}
+명언 (한국어): {quote_ko}
 명언 출처: {author} ({author_info})
 
 조건:
@@ -160,23 +161,28 @@ AUTHOR_INFO: [인물 한 줄 소개]"""
 
     captions = json.loads(resp2['candidates'][0]['content']['parts'][0]['text'])
     return {
-        'quote_en':    quote_en,
-        'quote_ko':    quote_ko,
-        'author':      author,
-        'author_info': author_info,
-        'caption_ig':  captions['caption_ig'],
-        'caption_th':  captions['caption_th'],
-        'image_prompt': captions['image_prompt'],
+        'quote_original': quote_original,
+        'quote_ko':       quote_ko,
+        'author':         author,
+        'author_info':    author_info,
+        'caption_ig':     captions['caption_ig'],
+        'caption_th':     captions['caption_th'],
+        'image_prompt':   captions['image_prompt'],
     }
 
 
 # ── STEP 4: Gemini 2.0 Flash로 이미지 생성 ────────────────────
 def generate_image(content: dict) -> bytes:
+    quote_ko = content['quote_ko']
+    author   = content['author']
+    base_style = content.get('image_prompt') or 'Minimalist quote card, dark navy background, premium clean design'
     prompt = (
-        content.get('image_prompt') or
-        f'Minimalist motivational quote card, dark navy background, '
-        f'white serif font: "{content["quote_en"]}" — {content["author"]}. '
-        f'Premium clean design, Instagram square format.'
+        f'{base_style}. '
+        f'Display the following Korean text prominently in the center: '
+        f'"{quote_ko}" '
+        f'Below the quote, show the attribution: "— {author}". '
+        f'Use elegant Korean-compatible serif font, white text on dark background. '
+        f'Square format (1:1), Instagram-ready.'
     )
     r = requests.post(
         f'{GEMINI_BASE}/models/gemini-2.0-flash-preview-image-generation:generateContent?key={GEMINI_KEY}',
@@ -280,7 +286,7 @@ def update_history(article: dict, content: dict, img_url: str, ig_id: str, th_id
         insertDataOption='INSERT_ROWS',
         body={'values': [[
             TODAY, SLOT, article['title'],
-            content['quote_ko'], content['quote_en'], content['author'],
+            content['quote_ko'], content['quote_original'], content['author'],
             img_url, ig_id, th_id, '성공'
         ]]}
     ).execute()
