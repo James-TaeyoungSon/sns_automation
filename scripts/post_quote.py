@@ -102,7 +102,7 @@ AUTHOR: [인물 이름]
 AUTHOR_INFO: [인물 한 줄 소개]"""
 
     r1 = requests.post(
-        f'{GEMINI_BASE}/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}',
+        f'{GEMINI_BASE}/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}',
         json={'contents': [{'parts': [{'text': search_prompt}]}],
               'tools': [{'google_search': {}}]},
         timeout=40
@@ -138,7 +138,7 @@ AUTHOR_INFO: [인물 한 줄 소개]"""
 - image_prompt: 명언 카드 이미지 생성용 영문 프롬프트 (100자 이내)"""
 
     r2 = requests.post(
-        f'{GEMINI_BASE}/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}',
+        f'{GEMINI_BASE}/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}',
         json={
             'contents': [{'parts': [{'text': caption_prompt}]}],
             'generationConfig': {'response_mime_type': 'application/json',
@@ -170,7 +170,7 @@ AUTHOR_INFO: [인물 한 줄 소개]"""
     }
 
 
-# ── STEP 4: Gemini Imagen 4.0으로 이미지 생성 ─────────────────
+# ── STEP 4: Gemini 2.0 Flash로 이미지 생성 ────────────────────
 def generate_image(content: dict) -> bytes:
     prompt = (
         content.get('image_prompt') or
@@ -179,24 +179,23 @@ def generate_image(content: dict) -> bytes:
         f'Premium clean design, Instagram square format.'
     )
     r = requests.post(
-        f'{GEMINI_BASE}/models/imagen-3.0-generate-002:predict?key={GEMINI_KEY}',
+        f'{GEMINI_BASE}/models/gemini-2.0-flash-preview-image-generation:generateContent?key={GEMINI_KEY}',
         json={
-            'instances': [{'prompt': prompt}],
-            'parameters': {'sampleCount': 1, 'aspectRatio': '1:1', 'outputMimeType': 'image/jpeg'}
+            'contents': [{'parts': [{'text': prompt}]}],
+            'generationConfig': {'responseModalities': ['IMAGE', 'TEXT']}
         },
         timeout=60
     )
     resp = r.json()
     if 'error' in resp:
-        raise RuntimeError(f"Imagen 오류: {resp['error']['message']}")
-    if 'predictions' not in resp or not resp['predictions']:
-        raise RuntimeError(f"Imagen 응답 이상 (predictions 없음): {resp}")
-    pred = resp['predictions'][0]
-    if 'bytesBase64Encoded' not in pred:
-        raise RuntimeError(f"Imagen 이미지 데이터 없음: {pred}")
-    img_bytes = base64.b64decode(pred['bytesBase64Encoded'])
-    print(f"[OK] 이미지 생성: {len(img_bytes)//1024}KB")
-    return img_bytes
+        raise RuntimeError(f"이미지 생성 오류: {resp['error']['message']}")
+    parts = resp['candidates'][0]['content']['parts']
+    for part in parts:
+        if 'inlineData' in part:
+            img_bytes = base64.b64decode(part['inlineData']['data'])
+            print(f"[OK] 이미지 생성: {len(img_bytes)//1024}KB")
+            return img_bytes
+    raise RuntimeError(f"이미지 데이터 없음: {resp}")
 
 
 # ── STEP 5: catbox.moe CDN 업로드 ────────────────────────────
