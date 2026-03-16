@@ -10,9 +10,8 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 # ── 환경변수 로드 ──────────────────────────────────────────────
-SA_JSON        = os.environ['GOOGLE_SA_JSON']       # GitHub Secret (JSON 문자열)
+SA_JSON        = os.environ['GOOGLE_SA_JSON']
 SPREADSHEET_ID = os.environ['SPREADSHEET_ID']
-GDRIVE_FOLDER  = os.environ['GDRIVE_FOLDER_ID']
 GMAIL_USER     = os.environ['GMAIL_USER']
 GMAIL_PASS     = os.environ['GMAIL_APP_PASSWORD']
 
@@ -23,14 +22,9 @@ RSS_URL = 'https://api.rss2json.com/v1/api.json?rss_url=https://www.yna.co.kr/rs
 # ── Google 서비스 초기화 ───────────────────────────────────────
 sa_info = json.loads(SA_JSON)
 creds = service_account.Credentials.from_service_account_info(
-    sa_info,
-    scopes=[
-        'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/drive',
-    ]
+    sa_info, scopes=['https://www.googleapis.com/auth/spreadsheets']
 )
 sheets = build('sheets', 'v4', credentials=creds)
-drive  = build('drive',  'v3', credentials=creds)
 
 
 def fetch_news() -> list[dict]:
@@ -82,27 +76,6 @@ def save_to_sheets(news: list[dict]):
     print(f"[OK] 뉴스이력 + 선택기사 시트 저장 완료")
 
 
-def save_to_drive(news: list[dict]):
-    """뉴스 JSON을 Google Drive에 저장"""
-    filename = f"news_{TODAY}.json"
-    content  = json.dumps(news, ensure_ascii=False, indent=2).encode('utf-8')
-
-    # 기존 파일 삭제 (중복 방지)
-    existing = drive.files().list(
-        q=f"name='{filename}' and '{GDRIVE_FOLDER}' in parents and trashed=false",
-        fields='files(id)'
-    ).execute().get('files', [])
-    for f in existing:
-        drive.files().delete(fileId=f['id']).execute()
-
-    from googleapiclient.http import MediaInMemoryUpload
-    media = MediaInMemoryUpload(content, mimetype='application/json')
-    drive.files().create(
-        body={'name': filename, 'parents': [GDRIVE_FOLDER]},
-        media_body=media
-    ).execute()
-    print(f"[OK] Drive 저장: {filename}")
-
 
 def send_gmail(news: list[dict]):
     """Gmail로 뉴스 리스트 발송"""
@@ -152,6 +125,5 @@ if __name__ == '__main__':
         print(f"  {n['num']}. {n['title'][:50]}")
 
     save_to_sheets(news)
-    save_to_drive(news)
     send_gmail(news)
     print("=== 완료 ===")

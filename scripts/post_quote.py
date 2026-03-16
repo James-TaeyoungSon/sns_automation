@@ -6,12 +6,10 @@ import os, json, re, base64, time, requests
 from datetime import datetime, timezone, timedelta
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaInMemoryUpload
 
 # ── 환경변수 ───────────────────────────────────────────────────
 SA_JSON        = os.environ['GOOGLE_SA_JSON']
 SPREADSHEET_ID = os.environ['SPREADSHEET_ID']
-GDRIVE_FOLDER  = os.environ['GDRIVE_FOLDER_ID']
 GEMINI_KEY     = os.environ['GEMINI_API_KEY']
 IG_TOKEN       = os.environ['IG_ACCESS_TOKEN']
 IG_USER_ID     = os.environ['IG_USER_ID']
@@ -25,14 +23,9 @@ GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta'
 # ── Google 서비스 초기화 ───────────────────────────────────────
 sa_info = json.loads(SA_JSON)
 creds   = service_account.Credentials.from_service_account_info(
-    sa_info,
-    scopes=[
-        'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/drive',
-    ]
+    sa_info, scopes=['https://www.googleapis.com/auth/spreadsheets']
 )
 sheets = build('sheets', 'v4', credentials=creds)
-drive  = build('drive',  'v3', credentials=creds)
 
 
 # ── 헬퍼: Gemini 마크다운 코드블록 제거 ───────────────────────
@@ -159,32 +152,7 @@ def generate_image(content: dict) -> bytes:
     return img_bytes
 
 
-# ── STEP 5: Google Drive에 이미지 저장 ────────────────────────
-def save_image_to_drive(img_bytes: bytes, filename: str) -> str:
-    media = MediaInMemoryUpload(img_bytes, mimetype='image/jpeg')
-    file_meta = {
-        'name': filename,
-        'parents': [GDRIVE_FOLDER],
-    }
-    # 누구나 볼 수 있도록 공개 설정 (Instagram/Threads URL로 사용)
-    uploaded = drive.files().create(
-        body=file_meta, media_body=media, fields='id,webContentLink'
-    ).execute()
-    file_id = uploaded['id']
-
-    # 공개 읽기 권한 부여
-    drive.permissions().create(
-        fileId=file_id,
-        body={'type': 'anyone', 'role': 'reader'}
-    ).execute()
-
-    # 직접 다운로드 URL (인스타/스레드 서버가 접근 가능한 형식)
-    direct_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    print(f"[OK] Drive 이미지 저장: {filename} → {direct_url}")
-    return direct_url
-
-
-# ── STEP 6: catbox.moe CDN 업로드 (Drive 대안) ────────────────
+# ── STEP 5: catbox.moe CDN 업로드 ────────────────────────────
 def upload_to_catbox(img_bytes: bytes) -> str:
     r = requests.post(
         'https://catbox.moe/user/api.php',
@@ -295,20 +263,7 @@ if __name__ == '__main__':
     content   = generate_content(article)
     img_bytes = generate_image(content)
 
-    # 이미지 CDN 업로드 (catbox.moe 우선, 실패 시 Drive)
-    try:
-        img_url = upload_to_catbox(img_bytes)
-    except Exception as e:
-        print(f"catbox 실패({e}), Drive로 대체...")
-        fname   = f"quote_{TODAY}_{SLOT}.jpg"
-        img_url = save_image_to_drive(img_bytes, fname)
-
-    # Drive에도 항상 백업 저장
-    try:
-        fname = f"quote_{TODAY}_{SLOT}.jpg"
-        save_image_to_drive(img_bytes, fname)
-    except Exception as e:
-        print(f"[WARN] Drive 백업 실패: {e}")
+    img_url = upload_to_catbox(img_bytes)
 
     ig_id = post_instagram(img_url, content['caption_ig'])
     th_id = post_threads(img_url,   content['caption_th'])
