@@ -15,9 +15,9 @@ IG_TOKEN       = os.environ['IG_ACCESS_TOKEN']
 IG_USER_ID     = os.environ['IG_USER_ID']
 TH_TOKEN       = os.environ['THREADS_ACCESS_TOKEN']
 TH_USER_ID     = os.environ['THREADS_USER_ID']
-SLOT           = os.environ.get('SLOT', 'am')   # 'am' or 'pm'
-GH_TOKEN       = os.environ.get('GITHUB_TOKEN', '')
-GH_REPO        = os.environ.get('GITHUB_REPOSITORY', 'James-TaeyoungSon/sns_automation')
+SLOT              = os.environ.get('SLOT', 'am')   # 'am' or 'pm'
+CLOUDINARY_CLOUD  = os.environ['CLOUDINARY']
+CLOUDINARY_PRESET = os.environ['UPLOAD_PRESET']
 
 KST   = timezone(timedelta(hours=9))
 TODAY = datetime.now(KST).strftime('%Y-%m-%d')
@@ -215,38 +215,20 @@ def generate_image(content: dict) -> bytes:
     raise RuntimeError(f"이미지 데이터 없음: {resp}")
 
 
-# ── STEP 5: GitHub 레포에 이미지 임시 저장 → raw URL 반환 ────
-def upload_to_github(img_bytes: bytes) -> tuple[str, str, str]:
-    """(raw_url, filename, sha) 반환. 포스팅 후 delete_from_github()로 삭제."""
-    filename = f"images/quote_{datetime.now(KST).strftime('%Y%m%d_%H%M%S')}.jpg"
-    api_url  = f"https://api.github.com/repos/{GH_REPO}/contents/{filename}"
-    headers  = {'Authorization': f'token {GH_TOKEN}', 'Accept': 'application/vnd.github+json'}
-
-    r = requests.put(api_url, headers=headers, json={
-        'message': f'tmp: quote image {TODAY} {SLOT}',
-        'content': base64.b64encode(img_bytes).decode()
-    }, timeout=30)
-    if r.status_code not in (200, 201):
-        raise RuntimeError(f"GitHub 이미지 업로드 실패: {r.status_code} {r.text[:200]}")
-
-    sha     = r.json()['content']['sha']
-    raw_url = f"https://raw.githubusercontent.com/{GH_REPO}/main/{filename}"
-    print(f"[OK] GitHub 임시 업로드: {raw_url}")
-    return raw_url, filename, sha
-
-
-# ── STEP 5b: 포스팅 완료 후 이미지 삭제 ──────────────────────
-def delete_from_github(filename: str, sha: str):
-    api_url = f"https://api.github.com/repos/{GH_REPO}/contents/{filename}"
-    headers = {'Authorization': f'token {GH_TOKEN}', 'Accept': 'application/vnd.github+json'}
-    r = requests.delete(api_url, headers=headers, json={
-        'message': f'chore: remove tmp image {filename}',
-        'sha': sha
-    }, timeout=15)
-    if r.status_code == 200:
-        print(f"[OK] 임시 이미지 삭제 완료: {filename}")
-    else:
-        print(f"[WARN] 이미지 삭제 실패 (무시): {r.status_code}")
+# ── STEP 5: Cloudinary 업로드 ────────────────────────────────
+def upload_to_cloudinary(img_bytes: bytes) -> str:
+    r = requests.post(
+        f'https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD}/image/upload',
+        files={'file': ('quote.jpg', img_bytes, 'image/jpeg')},
+        data={'upload_preset': CLOUDINARY_PRESET},
+        timeout=30
+    )
+    resp = r.json()
+    if 'secure_url' not in resp:
+        raise RuntimeError(f"Cloudinary 업로드 실패: {resp}")
+    url = resp['secure_url']
+    print(f"[OK] Cloudinary 업로드: {url}")
+    return url
 
 
 # ── STEP 7: Instagram 포스팅 ───────────────────────────────────
@@ -338,14 +320,9 @@ if __name__ == '__main__':
     content   = generate_content(article)
     img_bytes = generate_image(content)
 
-    img_url, gh_filename, gh_sha = upload_to_github(img_bytes)
+    img_url = upload_to_cloudinary(img_bytes)
 
     ig_id = post_instagram(img_url, content['caption_ig'])
     th_id = post_threads(img_url,   content['caption_th'])
-
-    update_history(article, content, img_url, ig_id, th_id, sel_info)
-
-    # 포스팅 완료 후 임시 이미지 삭제 (저장소 용량 절약)
-    delete_from_github(gh_filename, gh_sha)
 
     print(f"=== 완료: Instagram={ig_id}, Threads={th_id} ===")
