@@ -2,8 +2,9 @@
 Workflow 2: 기사 선택 확인 → Gemini 명언+글 생성 → Imagen 이미지 → SNS 포스팅
 실행: 매일 10:00 KST (am 슬롯), 16:00 KST (pm 슬롯)
 """
-import os, json, re, base64, time, requests
+import os, json, re, base64, time, io, textwrap, requests
 from datetime import datetime, timezone, timedelta
+from PIL import Image, ImageDraw, ImageFont
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
@@ -187,19 +188,14 @@ AUTHOR_INFO: [인물 한 줄 소개]"""
     }
 
 
-# ── STEP 4: Gemini 2.0 Flash로 이미지 생성 ────────────────────
-def generate_image(content: dict) -> bytes:
-    quote_text = content['quote_original']   # 원문 그대로 (한국어면 한국어, 영어면 영어)
-    author     = content['author']
-    base_style = content.get('image_prompt') or 'Minimalist quote card, dark navy background, premium clean design'
+# ── STEP 4: 배경 이미지 생성 (텍스트 없음) ────────────────────
+def generate_background(content: dict) -> bytes:
+    """AI로 배경 이미지만 생성 — 텍스트는 Pillow로 별도 합성"""
+    style = content.get('image_prompt') or 'Minimalist dark navy abstract background'
     prompt = (
-        f'{base_style}. '
-        f'Display this exact quote text prominently in the center: '
-        f'"{quote_text}" '
-        f'Below the quote, show the attribution: "— {author}". '
-        f'Use elegant serif font, white text on dark background. '
-        f'No translation, no paraphrase — show the exact text above. '
-        f'Square format (1:1), Instagram-ready.'
+        f'{style}. '
+        f'Background image only — absolutely NO text, NO letters, NO words anywhere. '
+        f'Dark moody atmosphere, high quality, square format 1:1.'
     )
     resp = gemini_post(
         f'{GEMINI_BASE}/models/gemini-2.5-flash-image:generateContent?key={GEMINI_KEY}',
@@ -210,13 +206,74 @@ def generate_image(content: dict) -> bytes:
     )
     if 'error' in resp:
         raise RuntimeError(f"이미지 생성 오류: {resp['error']['message']}")
-    parts = resp['candidates'][0]['content']['parts']
-    for part in parts:
+    for part in resp['candidates'][0]['content']['parts']:
         if 'inlineData' in part:
             img_bytes = base64.b64decode(part['inlineData']['data'])
-            print(f"[OK] 이미지 생성: {len(img_bytes)//1024}KB")
+            print(f"[OK] 배경 이미지 생성: {len(img_bytes)//1024}KB")
             return img_bytes
     raise RuntimeError(f"이미지 데이터 없음: {resp}")
+
+
+# ── STEP 4b: Pillow로 명언 텍스트 합성 ────────────────────────
+def overlay_text(img_bytes: bytes, quote_text: str, author: str) -> bytes:
+    """배경 위에 명언+저자를 Pillow로 직접 렌더링 — 오타 제로"""
+    img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+    w, h = img.size
+
+    # 반투명 어두운 오버레이 (텍스트 가독성)
+    overlay = Image.new('RGBA', (w, h), (0, 0, 0, 140))
+    img = Image.alpha_composite(img.convert('RGBA'), overlay).convert('RGB')
+    draw = ImageDraw.Draw(img)
+
+    # 폰트 로드 (Ubuntu: NanumMyeongjo, Windows: 맑은고딕)
+    font_candidates = [
+        '/usr/share/fonts/truetype/nanum/NanumMyeongjo.ttf',
+        '/usr/share/fonts/truetype/nanum/NanumGothic.ttf',
+        'C:/Windows/Fonts/malgun.ttf',
+        'C:/Windows/Fonts/gulim.ttc',
+    ]
+    q_size = max(40, h // 18)
+    a_size = max(28, h // 28)
+    q_font = a_font = None
+    for fp in font_candidates:
+        try:
+            q_font = ImageFont.truetype(fp, size=q_size)
+            a_font = ImageFont.truetype(fp, size=a_size)
+            break
+        except OSError:
+            continue
+    if q_font is None:
+        q_font = a_font = ImageFont.load_default()
+
+    # 텍스트 줄바꿈 (한 줄당 약 14자)
+    wrap_w = max(10, w // q_size)
+    lines = textwrap.wrap(f'"{quote_text}"', width=wrap_w)
+
+    line_h = q_size + 12
+    total_h = len(lines) * line_h + a_size + 30
+    y = (h - total_h) // 2
+
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=q_font)
+        x = (w - (bbox[2] - bbox[0])) // 2
+        draw.text((x, y), line, font=q_font, fill='white')
+        y += line_h
+
+    # 저자명
+    author_str = f'— {author}'
+    bbox = draw.textbbox((0, 0), author_str, font=a_font)
+    x = (w - (bbox[2] - bbox[0])) // 2
+    draw.text((x, y + 10), author_str, font=a_font, fill='#cccccc')
+
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=92)
+    print(f"[OK] 텍스트 합성 완료: {buf.tell()//1024}KB")
+    return buf.getvalue()
+
+
+def generate_image(content: dict) -> bytes:
+    bg = generate_background(content)
+    return overlay_text(bg, content['quote_original'], content['author'])
 
 
 # ── STEP 5: Cloudinary 업로드 ────────────────────────────────

@@ -1,3 +1,4 @@
 google-auth==2.37.0
 google-api-python-client==2.163.0
 requests==2.32.3
+Pillow==11.1.0
