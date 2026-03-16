@@ -14,6 +14,7 @@ GEMINI_KEY     = os.environ['GEMINI_API_KEY']
 IG_TOKEN       = os.environ['IG_ACCESS_TOKEN']
 IG_USER_ID     = os.environ['IG_USER_ID']
 TH_TOKEN       = os.environ['THREADS_ACCESS_TOKEN']
+TH_USER_ID     = os.environ['THREADS_USER_ID']
 SLOT           = os.environ.get('SLOT', 'am')   # 'am' or 'pm'
 
 KST   = timezone(timedelta(hours=9))
@@ -193,15 +194,8 @@ def post_instagram(img_url: str, caption: str) -> str:
 
 # ── STEP 8: Threads 포스팅 ────────────────────────────────────
 def post_threads(img_url: str, caption: str) -> str:
-    # Threads user ID 조회
-    r0 = requests.get(
-        'https://graph.threads.net/v1.0/me',
-        params={'fields': 'id', 'access_token': TH_TOKEN}
-    )
-    th_uid = r0.json()['id']
-
     r1 = requests.post(
-        f'https://graph.threads.net/v1.0/{th_uid}/threads',
+        f'https://graph.threads.net/v1.0/{TH_USER_ID}/threads',
         params={'access_token': TH_TOKEN},
         json={'media_type': 'IMAGE', 'image_url': img_url, 'text': caption[:500]}
     )
@@ -211,7 +205,7 @@ def post_threads(img_url: str, caption: str) -> str:
 
     time.sleep(3)
     r2 = requests.post(
-        f'https://graph.threads.net/v1.0/{th_uid}/threads_publish',
+        f'https://graph.threads.net/v1.0/{TH_USER_ID}/threads_publish',
         params={'access_token': TH_TOKEN},
         json={'creation_id': resp1['id']}
     )
