@@ -90,43 +90,84 @@ def get_article_info(article_num: int) -> dict:
 
 # ── STEP 3: Gemini로 명언 + 해석 + 캡션 생성 ──────────────────
 def generate_content(article: dict) -> dict:
-    prompt = f"""다음 뉴스 기사를 분석해서 관련 명언 콘텐츠를 만들어줘.
+    # 3-1: Google Search ON → 실존 명언 검색 (plain text)
+    search_prompt = f"""다음 뉴스 기사와 연관된 실존 인물의 실제 명언 하나를 웹에서 찾아줘.
 
 기사 제목: {article['title']}
-기사 URL: {article['url']}
+
+반드시 아래 형식으로만 답해줘 (다른 설명 없이):
+QUOTE_EN: [명언 원문 영어]
+QUOTE_KO: [명언 한국어 번역]
+AUTHOR: [인물 이름]
+AUTHOR_INFO: [인물 한 줄 소개]"""
+
+    r1 = requests.post(
+        f'{GEMINI_BASE}/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}',
+        json={'contents': [{'parts': [{'text': search_prompt}]}],
+              'tools': [{'google_search': {}}]},
+        timeout=40
+    )
+    resp1 = r1.json()
+    if 'error' in resp1:
+        raise RuntimeError(f"Gemini 명언검색 오류: {resp1['error']['message']}")
+
+    quote_raw = resp1['candidates'][0]['content']['parts'][0]['text']
+    # plain text 파싱
+    def extract(key, text):
+        for line in text.splitlines():
+            if line.startswith(f'{key}:'):
+                return line.split(':', 1)[1].strip()
+        return ''
+    quote_en    = extract('QUOTE_EN',    quote_raw)
+    quote_ko    = extract('QUOTE_KO',    quote_raw)
+    author      = extract('AUTHOR',      quote_raw)
+    author_info = extract('AUTHOR_INFO', quote_raw)
+    print(f"[OK] 명언 검색: {quote_en[:60]}... — {author}")
+
+    # 3-2: Google Search OFF + response_mime_type json → 캡션/이미지 프롬프트 생성
+    caption_prompt = f"""다음 뉴스 기사와 명언을 기반으로 SNS 포스팅 콘텐츠를 작성해줘.
+
+기사 제목: {article['title']}
+명언 원문: {quote_en}
+명언 번역: {quote_ko}
+명언 출처: {author} ({author_info})
 
 조건:
-1. 실존 인물이 실제로 한 말 중에서 기사 주제와 연관된 명언을 찾아줘
-2. 기사를 만평하듯 날카롭게 분석하면서 명언과 연결짓는 글을 써줘
-3. Instagram용 긴 캡션(1500자 이내)과 Threads용 짧은 캡션(450자 이내) 모두 작성
+- Instagram 캡션: 기사를 만평하듯 날카롭게 분석하고 명언과 연결, 해시태그 포함, 1500자 이내
+- Threads 캡션: 핵심만 간결하게, 해시태그 포함, 450자 이내
+- image_prompt: 명언 카드 이미지 생성용 영문 프롬프트 (100자 이내)"""
 
-아래 JSON 형식으로만 반환 (코드블록 없이):
-{{
-  "quote_ko": "명언 한국어 번역",
-  "quote_en": "명언 원문",
-  "author": "인물 이름",
-  "author_info": "인물 한 줄 소개",
-  "caption_ig": "Instagram 캡션 (명언 + 기사 만평 + 해석 + 해시태그, 1500자 이내)",
-  "caption_th": "Threads 캡션 (핵심만 간결하게 + 해시태그, 450자 이내)",
-  "image_prompt": "Gemini Imagen용 영문 이미지 프롬프트 (명언 카드 스타일, 100자 이내)"
-}}"""
-
-    r = requests.post(
+    r2 = requests.post(
         f'{GEMINI_BASE}/models/gemini-2.5-flash:generateContent?key={GEMINI_KEY}',
         json={
-            'contents': [{'parts': [{'text': prompt}]}],
-            'tools': [{'google_search': {}}],   # 실존 명언 웹 검색
+            'contents': [{'parts': [{'text': caption_prompt}]}],
+            'generationConfig': {'response_mime_type': 'application/json',
+                                 'response_schema': {
+                                     'type': 'object',
+                                     'properties': {
+                                         'caption_ig':    {'type': 'string'},
+                                         'caption_th':    {'type': 'string'},
+                                         'image_prompt':  {'type': 'string'},
+                                     },
+                                     'required': ['caption_ig', 'caption_th', 'image_prompt']
+                                 }}
         },
         timeout=40
     )
-    resp = r.json()
-    if 'error' in resp:
-        raise RuntimeError(f"Gemini 텍스트 오류: {resp['error']['message']}")
+    resp2 = r2.json()
+    if 'error' in resp2:
+        raise RuntimeError(f"Gemini 캡션생성 오류: {resp2['error']['message']}")
 
-    raw = resp['candidates'][0]['content']['parts'][0]['text']
-    data = json.loads(strip_markdown(raw))
-    print(f"[OK] 명언: {data['quote_en'][:60]}... — {data['author']}")
-    return data
+    captions = json.loads(resp2['candidates'][0]['content']['parts'][0]['text'])
+    return {
+        'quote_en':    quote_en,
+        'quote_ko':    quote_ko,
+        'author':      author,
+        'author_info': author_info,
+        'caption_ig':  captions['caption_ig'],
+        'caption_th':  captions['caption_th'],
+        'image_prompt': captions['image_prompt'],
+    }
 
 
 # ── STEP 4: Gemini Imagen 4.0으로 이미지 생성 ─────────────────
