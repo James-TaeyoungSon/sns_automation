@@ -21,6 +21,22 @@ KST   = timezone(timedelta(hours=9))
 TODAY = datetime.now(KST).strftime('%Y-%m-%d')
 GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta'
 
+
+# ── 헬퍼: Gemini API 재시도 래퍼 ──────────────────────────────
+def gemini_post(url: str, payload: dict, retries: int = 4, backoff: float = 10.0) -> dict:
+    """일시적 서버 과부하(503/high demand) 시 최대 retries회 재시도."""
+    for attempt in range(retries):
+        r = requests.post(url, json=payload, timeout=60)
+        resp = r.json()
+        err_msg = resp.get('error', {}).get('message', '')
+        if 'high demand' in err_msg or 'temporarily' in err_msg or r.status_code == 503:
+            wait = backoff * (attempt + 1)
+            print(f"[RETRY {attempt+1}/{retries}] 서버 과부하, {wait:.0f}초 후 재시도...")
+            time.sleep(wait)
+            continue
+        return resp
+    raise RuntimeError(f"Gemini API 재시도 초과: {resp}")
+
 # ── Google 서비스 초기화 ───────────────────────────────────────
 sa_info = json.loads(SA_JSON)
 creds   = service_account.Credentials.from_service_account_info(
@@ -102,13 +118,10 @@ QUOTE_KO: [명언 한국어 번역 — 원문이 이미 한국어면 그대로]
 AUTHOR: [인물 이름 (한국어)]
 AUTHOR_INFO: [인물 한 줄 소개]"""
 
-    r1 = requests.post(
+    resp1 = gemini_post(
         f'{GEMINI_BASE}/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_KEY}',
-        json={'contents': [{'parts': [{'text': search_prompt}]}],
-              'tools': [{'google_search': {}}]},
-        timeout=40
+        {'contents': [{'parts': [{'text': search_prompt}]}], 'tools': [{'google_search': {}}]}
     )
-    resp1 = r1.json()
     if 'error' in resp1:
         raise RuntimeError(f"Gemini 명언검색 오류: {resp1['error']['message']}")
 
@@ -138,9 +151,9 @@ AUTHOR_INFO: [인물 한 줄 소개]"""
 - Threads 캡션: 핵심만 간결하게, 해시태그 포함, 450자 이내
 - image_prompt: 명언 카드 이미지 생성용 영문 프롬프트 (100자 이내)"""
 
-    r2 = requests.post(
+    resp2 = gemini_post(
         f'{GEMINI_BASE}/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_KEY}',
-        json={
+        {
             'contents': [{'parts': [{'text': caption_prompt}]}],
             'generationConfig': {'response_mime_type': 'application/json',
                                  'response_schema': {
@@ -152,10 +165,8 @@ AUTHOR_INFO: [인물 한 줄 소개]"""
                                      },
                                      'required': ['caption_ig', 'caption_th', 'image_prompt']
                                  }}
-        },
-        timeout=40
+        }
     )
-    resp2 = r2.json()
     if 'error' in resp2:
         raise RuntimeError(f"Gemini 캡션생성 오류: {resp2['error']['message']}")
 
@@ -184,15 +195,13 @@ def generate_image(content: dict) -> bytes:
         f'Use elegant Korean-compatible serif font, white text on dark background. '
         f'Square format (1:1), Instagram-ready.'
     )
-    r = requests.post(
+    resp = gemini_post(
         f'{GEMINI_BASE}/models/gemini-2.5-flash-image:generateContent?key={GEMINI_KEY}',
-        json={
+        {
             'contents': [{'parts': [{'text': prompt}]}],
             'generationConfig': {'responseModalities': ['IMAGE', 'TEXT']}
-        },
-        timeout=60
+        }
     )
-    resp = r.json()
     if 'error' in resp:
         raise RuntimeError(f"이미지 생성 오류: {resp['error']['message']}")
     parts = resp['candidates'][0]['content']['parts']
