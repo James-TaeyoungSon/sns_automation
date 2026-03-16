@@ -110,13 +110,16 @@ def get_article_info(article_num: int) -> dict:
 def generate_content(article: dict) -> dict:
     # 3-1: Google Search ON → 실존 명언 검색 (plain text)
     search_prompt = f"""다음 뉴스 기사와 연관된 실존 인물의 실제 명언 하나를 웹에서 찾아줘.
-한국인 인물과 외국 인물 모두 포함해서 가장 어울리는 명언을 골라줘.
+
+검색 우선순위:
+1순위: 한국 인물(역사적 인물, 정치인, 기업인, 사상가 등)의 한국어 명언 — 한국어 사이트(나무위키, 위키인용집, 한국어 뉴스 등)에서 우선 검색
+2순위: 외국 인물의 명언 (영어 원문 그대로)
 
 기사 제목: {article['title']}
 
 반드시 아래 형식으로만 답해줘 (다른 설명 없이):
-QUOTE_ORIGINAL: [명언 원문 (원어 그대로)]
-QUOTE_KO: [명언 한국어 번역 — 원문이 이미 한국어면 그대로]
+QUOTE_ORIGINAL: [명언 원문 — 한국인이면 한국어, 외국인이면 영어 등 원어 그대로]
+QUOTE_KO: [명언 한국어 번역 — 원문이 이미 한국어면 그대로 복사]
 AUTHOR: [인물 이름 (한국어)]
 AUTHOR_INFO: [인물 한 줄 소개]"""
 
@@ -186,15 +189,16 @@ AUTHOR_INFO: [인물 한 줄 소개]"""
 
 # ── STEP 4: Gemini 2.0 Flash로 이미지 생성 ────────────────────
 def generate_image(content: dict) -> bytes:
-    quote_ko = content['quote_ko']
-    author   = content['author']
+    quote_text = content['quote_original']   # 원문 그대로 (한국어면 한국어, 영어면 영어)
+    author     = content['author']
     base_style = content.get('image_prompt') or 'Minimalist quote card, dark navy background, premium clean design'
     prompt = (
         f'{base_style}. '
-        f'Display the following Korean text prominently in the center: '
-        f'"{quote_ko}" '
+        f'Display this exact quote text prominently in the center: '
+        f'"{quote_text}" '
         f'Below the quote, show the attribution: "— {author}". '
-        f'Use elegant Korean-compatible serif font, white text on dark background. '
+        f'Use elegant serif font, white text on dark background. '
+        f'No translation, no paraphrase — show the exact text above. '
         f'Square format (1:1), Instagram-ready.'
     )
     resp = gemini_post(
