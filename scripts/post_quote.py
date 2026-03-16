@@ -103,7 +103,7 @@ AUTHOR: [인물 이름 (한국어)]
 AUTHOR_INFO: [인물 한 줄 소개]"""
 
     r1 = requests.post(
-        f'{GEMINI_BASE}/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}',
+        f'{GEMINI_BASE}/models/gemini-2.0-flash-001:generateContent?key={GEMINI_KEY}',
         json={'contents': [{'parts': [{'text': search_prompt}]}],
               'tools': [{'google_search': {}}]},
         timeout=40
@@ -139,7 +139,7 @@ AUTHOR_INFO: [인물 한 줄 소개]"""
 - image_prompt: 명언 카드 이미지 생성용 영문 프롬프트 (100자 이내)"""
 
     r2 = requests.post(
-        f'{GEMINI_BASE}/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}',
+        f'{GEMINI_BASE}/models/gemini-2.0-flash-001:generateContent?key={GEMINI_KEY}',
         json={
             'contents': [{'parts': [{'text': caption_prompt}]}],
             'generationConfig': {'response_mime_type': 'application/json',
