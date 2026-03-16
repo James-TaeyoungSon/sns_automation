@@ -1,0 +1,60 @@
+name: 2. 명언 포스팅 (오전 10시 / 오후 4시)
+
+on:
+  schedule:
+    - cron: '0 1 * * *'   # 01:00 UTC = 10:00 KST (오전 슬롯)
+    - cron: '0 7 * * *'   # 07:00 UTC = 16:00 KST (오후 슬롯)
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: '슬롯 선택 (am / pm)'
+        required: true
+        default: 'am'
+        type: choice
+        options: [am, pm]
+
+jobs:
+  post-quote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: 슬롯 결정 (cron 시간 기반)
+        id: slot
+        run: |
+          # workflow_dispatch 입력값 우선, 없으면 현재 UTC 시간으로 판단
+          if [ "${{ github.event.inputs.slot }}" != "" ]; then
+            echo "slot=${{ github.event.inputs.slot }}" >> $GITHUB_OUTPUT
+          else
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" = "01" ]; then
+              echo "slot=am" >> $GITHUB_OUTPUT
+            else
+              echo "slot=pm" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: 명언 포스팅
+        env:
+          GOOGLE_SA_JSON:     ${{ secrets.GOOGLE_SA_JSON }}
+          SPREADSHEET_ID:     ${{ secrets.SPREADSHEET_ID }}
+          GDRIVE_FOLDER_ID:   ${{ secrets.GDRIVE_FOLDER_ID }}
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          IG_ACCESS_TOKEN:    ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID:         ${{ secrets.IG_USER_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          THREADS_USER_ID:    ${{ secrets.THREADS_USER_ID }}
+          SLOT:               ${{ steps.slot.outputs.slot }}
+        run: python scripts/post_quote.py

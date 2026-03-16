@@ -1,0 +1,14 @@
+.env
+GCP-MakeAutomation-sns_automation_key/
+*.json
+!scripts/*.json
+__pycache__/
+*.pyc
+*.xlsx
+*.gsheet
+response.json
+make-blueprints/
+image/
+desktop.ini
+*.py
+!scripts/*.py
