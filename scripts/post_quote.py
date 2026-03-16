@@ -16,6 +16,8 @@ IG_USER_ID     = os.environ['IG_USER_ID']
 TH_TOKEN       = os.environ['THREADS_ACCESS_TOKEN']
 TH_USER_ID     = os.environ['THREADS_USER_ID']
 SLOT           = os.environ.get('SLOT', 'am')   # 'am' or 'pm'
+GH_TOKEN       = os.environ.get('GITHUB_TOKEN', '')
+GH_REPO        = os.environ.get('GITHUB_REPOSITORY', 'James-TaeyoungSon/sns_automation')
 
 KST   = timezone(timedelta(hours=9))
 TODAY = datetime.now(KST).strftime('%Y-%m-%d')
@@ -213,19 +215,32 @@ def generate_image(content: dict) -> bytes:
     raise RuntimeError(f"이미지 데이터 없음: {resp}")
 
 
-# ── STEP 5: catbox.moe CDN 업로드 ────────────────────────────
-def upload_to_catbox(img_bytes: bytes) -> str:
-    r = requests.post(
-        'https://catbox.moe/user/api.php',
-        data={'reqtype': 'fileupload'},
-        files={'fileToUpload': ('quote.jpg', img_bytes, 'image/jpeg')},
-        timeout=30
-    )
-    url = r.text.strip()
-    if not url.startswith('https://'):
-        raise RuntimeError(f"catbox 업로드 실패: {url}")
-    print(f"[OK] catbox.moe 업로드: {url}")
-    return url
+# ── STEP 5: GitHub 레포에 이미지 저장 → raw URL 반환 ─────────
+def upload_to_github(img_bytes: bytes) -> str:
+    filename = f"images/quote_{datetime.now(KST).strftime('%Y%m%d_%H%M%S')}.jpg"
+    api_url  = f"https://api.github.com/repos/{GH_REPO}/contents/{filename}"
+    headers  = {'Authorization': f'token {GH_TOKEN}', 'Accept': 'application/vnd.github+json'}
+
+    # 기존 파일 SHA 조회 (덮어쓰기 시 필요, 없으면 신규 생성)
+    sha = None
+    r_get = requests.get(api_url, headers=headers, timeout=15)
+    if r_get.status_code == 200:
+        sha = r_get.json().get('sha')
+
+    payload = {
+        'message': f'chore: add quote image {TODAY} {SLOT}',
+        'content': base64.b64encode(img_bytes).decode()
+    }
+    if sha:
+        payload['sha'] = sha
+
+    r = requests.put(api_url, headers=headers, json=payload, timeout=30)
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"GitHub 이미지 업로드 실패: {r.status_code} {r.text[:200]}")
+
+    raw_url = f"https://raw.githubusercontent.com/{GH_REPO}/main/{filename}"
+    print(f"[OK] GitHub 이미지 업로드: {raw_url}")
+    return raw_url
 
 
 # ── STEP 7: Instagram 포스팅 ───────────────────────────────────
@@ -317,7 +332,7 @@ if __name__ == '__main__':
     content   = generate_content(article)
     img_bytes = generate_image(content)
 
-    img_url = upload_to_catbox(img_bytes)
+    img_url = upload_to_github(img_bytes)
 
     ig_id = post_instagram(img_url, content['caption_ig'])
     th_id = post_threads(img_url,   content['caption_th'])

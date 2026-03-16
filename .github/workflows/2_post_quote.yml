@@ -17,6 +17,8 @@ jobs:
   post-quote:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -59,4 +61,6 @@ jobs:
           THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
           THREADS_USER_ID:    ${{ secrets.THREADS_USER_ID }}
           SLOT:               ${{ steps.slot.outputs.slot }}
+          GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY:  ${{ github.repository }}
         run: python scripts/post_quote.py
