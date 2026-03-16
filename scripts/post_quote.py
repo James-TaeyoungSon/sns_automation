@@ -179,7 +179,7 @@ def generate_image(content: dict) -> bytes:
         f'Premium clean design, Instagram square format.'
     )
     r = requests.post(
-        f'{GEMINI_BASE}/models/imagen-4.0-generate-001:predict?key={GEMINI_KEY}',
+        f'{GEMINI_BASE}/models/imagen-3.0-generate-002:predict?key={GEMINI_KEY}',
         json={
             'instances': [{'prompt': prompt}],
             'parameters': {'sampleCount': 1, 'aspectRatio': '1:1', 'outputMimeType': 'image/jpeg'}
@@ -189,7 +189,12 @@ def generate_image(content: dict) -> bytes:
     resp = r.json()
     if 'error' in resp:
         raise RuntimeError(f"Imagen 오류: {resp['error']['message']}")
-    img_bytes = base64.b64decode(resp['predictions'][0]['bytesBase64Encoded'])
+    if 'predictions' not in resp or not resp['predictions']:
+        raise RuntimeError(f"Imagen 응답 이상 (predictions 없음): {resp}")
+    pred = resp['predictions'][0]
+    if 'bytesBase64Encoded' not in pred:
+        raise RuntimeError(f"Imagen 이미지 데이터 없음: {pred}")
+    img_bytes = base64.b64decode(pred['bytesBase64Encoded'])
     print(f"[OK] 이미지 생성: {len(img_bytes)//1024}KB")
     return img_bytes
 
