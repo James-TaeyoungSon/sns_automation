@@ -343,7 +343,7 @@ def post_threads(img_url: str, caption: str) -> str:
 # ── STEP 9: 포스팅이력 시트 업데이트 ─────────────────────────
 def update_history(article: dict, content: dict, img_url: str, ig_id: str, th_id: str, sel_info: dict):
     # 선택기사 처리상태 → 완료
-    stat_range = f"선택기사!{chr(69 + sel_info['stat_col'] - 3)}{sel_info['row_index']}"
+    stat_range = f"선택기사!{chr(65 + sel_info['stat_col'])}{sel_info['row_index']}"
     sheets.spreadsheets().values().update(
         spreadsheetId=SPREADSHEET_ID,
         range=stat_range,
@@ -386,4 +386,5 @@ if __name__ == '__main__':
     ig_id = post_instagram(img_url, content['caption_ig'])
     th_id = post_threads(img_url,   content['caption_th'])
 
+    update_history(article, content, img_url, ig_id, th_id, sel_info)
     print(f"=== 완료: Instagram={ig_id}, Threads={th_id} ===")
