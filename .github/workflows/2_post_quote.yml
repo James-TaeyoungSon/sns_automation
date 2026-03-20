@@ -2,8 +2,8 @@ name: 2. 명언 포스팅 (오전 10시 / 오후 4시)
 
 on:
   schedule:
-    - cron: '0 1 * * *'   # 01:00 UTC = 10:00 KST (오전 슬롯)
-    - cron: '0 7 * * *'   # 07:00 UTC = 16:00 KST (오후 슬롯)
+    - cron: '0 1 * * *'   # 01:00 UTC → 실제 ~03:30 UTC = 12:30 KST (오전 슬롯)
+    - cron: '0 7 * * *'   # 07:00 UTC → 실제 ~07:37 UTC = 16:37 KST (오후 슬롯)
   workflow_dispatch:
     inputs:
       slot:
@@ -44,7 +44,8 @@ jobs:
             echo "slot=${{ github.event.inputs.slot }}" >> $GITHUB_OUTPUT
           else
             HOUR=$(date -u +%H)
-            if [ "$HOUR" = "01" ]; then
+            # 01:00 UTC 크론은 딜레이로 03~05시에 실행됨 → 06시 미만이면 am
+            if [ "$HOUR" -lt "06" ]; then
               echo "slot=am" >> $GITHUB_OUTPUT
             else
               echo "slot=pm" >> $GITHUB_OUTPUT
