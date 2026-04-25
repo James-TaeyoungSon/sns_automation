@@ -3,7 +3,7 @@ import os
 import sys
 from dataclasses import asdict
 
-from article_reader import fetch_article
+from article_reader import discover_url_from_title, fetch_article
 from llm_processor import generate_article_threads_content
 from notion_manager import NotionManager, STATUS_DRAFT_READY, STATUS_TRIGGER
 from threads_publisher import post_text_to_threads
@@ -62,10 +62,21 @@ def process_page(notion: NotionManager, page: dict, dry_run: bool = False) -> No
     page_id = page["id"]
     source_url = notion.get_url(page)
     if not source_url:
-        if not dry_run:
-            notion.set_failed(page_id, "URL property is empty or missing.")
-        print(f"Skipped {page_id}: URL is missing.")
-        return
+        title = notion.get_title(page)
+        print(f"URL is missing. Trying to discover URL from title: {title[:80]}")
+        source_url = discover_url_from_title(title)
+        if source_url:
+            notion.update_page(page_id, url=source_url)
+            print(f"Discovered URL: {source_url}")
+        else:
+            message = (
+                "URL property is empty and no reliable article URL could be "
+                "discovered from the title."
+            )
+            if not dry_run:
+                notion.set_failed(page_id, message)
+            print(f"Skipped {page_id}: {message}")
+            return
 
     try:
         if not dry_run:

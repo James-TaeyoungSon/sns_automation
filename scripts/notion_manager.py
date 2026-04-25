@@ -62,7 +62,7 @@ class NotionManager:
         filters = []
 
         url_field = self.fields.get("url")
-        if url_field:
+        if mode == "auto" and url_field:
             url_type = self.schema[url_field]["type"]
             if url_type == "url":
                 filters.append({"property": url_field, "url": {"is_not_empty": True}})

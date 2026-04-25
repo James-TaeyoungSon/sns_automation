@@ -62,6 +62,56 @@ def fetch_article(url: str, timeout: int = 20) -> Article:
     )
 
 
+def discover_url_from_title(title: str, timeout: int = 20) -> str:
+    """Best-effort URL discovery for Notion share rows that only contain a title."""
+    title = _clean_space(title)
+    if not title:
+        return ""
+
+    source_tokens = _tokens(title)
+    best_url = ""
+    best_score = 0.0
+
+    search_pages = []
+    for search_url in [
+        "https://duckduckgo.com/html/",
+        "https://html.duckduckgo.com/html/",
+    ]:
+        try:
+            response = requests.get(
+                search_url,
+                params={"q": title},
+                headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "ko,en;q=0.8"},
+                timeout=timeout,
+            )
+            if response.status_code == 200:
+                search_pages.append(response.text)
+        except requests.RequestException:
+            continue
+
+    for html in search_pages:
+        soup = BeautifulSoup(html, "html.parser")
+        for link in soup.select("a.result__a"):
+            href = _unwrap_search_result_url(link.get("href", ""))
+            candidate_title = _clean_space(link.get_text(" ", strip=True))
+            if not href or not href.startswith(("http://", "https://")):
+                continue
+
+            candidate_tokens = _tokens(candidate_title)
+            if not candidate_tokens:
+                continue
+
+            overlap = len(source_tokens & candidate_tokens)
+            score = overlap / max(1, min(len(source_tokens), 12))
+            if score > best_score:
+                best_score = score
+                best_url = href
+
+    if best_score >= 0.35:
+        return best_url
+    return ""
+
+
 def _looks_like_url(value: str) -> bool:
     parsed = urlparse((value or "").strip())
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
@@ -164,3 +214,19 @@ def _dedupe(values: list[str]) -> list[str]:
         seen.add(key)
         result.append(value)
     return result
+
+
+def _unwrap_search_result_url(href: str) -> str:
+    if not href:
+        return ""
+    if href.startswith("//"):
+        href = f"https:{href}"
+    parsed = urlparse(href)
+    if parsed.netloc.endswith("duckduckgo.com"):
+        return parse_qs(parsed.query).get("uddg", [""])[0]
+    return href
+
+
+def _tokens(value: str) -> set[str]:
+    normalized = re.sub(r"[^0-9A-Za-z가-힣]+", " ", value or "").lower()
+    return {token for token in normalized.split() if len(token) >= 2}
