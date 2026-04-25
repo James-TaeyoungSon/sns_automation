@@ -22,8 +22,8 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 의존성 설치
-        run: pip install requests PyNaCl
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
       - name: 토큰 갱신
         env:

@@ -1,70 +1,104 @@
-"""
-Workflow 3: Instagram / Threads 액세스 토큰 자동 갱신
-실행: 매월 1일 (GitHub Actions cron) — 60일 만료 전 갱신
-"""
-import os, base64, requests
+import base64
+import os
+
+import requests
 from nacl import encoding, public
 
-GH_PAT  = os.environ['GH_PAT']
-GH_REPO = os.environ.get('GITHUB_REPOSITORY', 'James-TaeyoungSon/sns_automation')
-IG_TOKEN = os.environ['IG_ACCESS_TOKEN']
-TH_TOKEN = os.environ['THREADS_ACCESS_TOKEN']
+
+GH_PAT = os.environ["GH_PAT"]
+GH_REPO = os.environ.get("GITHUB_REPOSITORY", "James-TaeyoungSon/sns_automation")
 
 
-def refresh_instagram() -> str:
-    r = requests.get(
-        'https://graph.instagram.com/refresh_access_token',
-        params={'grant_type': 'ig_refresh_token', 'access_token': IG_TOKEN},
-        timeout=20
+def refresh_instagram(token: str) -> str:
+    response = requests.get(
+        "https://graph.instagram.com/refresh_access_token",
+        params={"grant_type": "ig_refresh_token", "access_token": token},
+        timeout=20,
     )
-    resp = r.json()
-    if 'access_token' not in resp:
-        raise RuntimeError(f"Instagram 토큰 갱신 실패: {resp}")
-    days = resp.get('expires_in', 0) // 86400
-    print(f"[OK] Instagram 토큰 갱신 완료 (유효기간 {days}일)")
-    return resp['access_token']
+    data = response.json()
+    if "access_token" not in data:
+        raise RuntimeError(f"Instagram token refresh failed: {data}")
+    print_token_result("Instagram", data)
+    return data["access_token"]
 
 
-def refresh_threads() -> str:
-    r = requests.get(
-        'https://graph.threads.net/refresh_access_token',
-        params={'grant_type': 'th_refresh_token', 'access_token': TH_TOKEN},
-        timeout=20
+def refresh_threads(token: str) -> str:
+    response = requests.get(
+        "https://graph.threads.net/refresh_access_token",
+        params={"grant_type": "th_refresh_token", "access_token": token},
+        timeout=20,
     )
-    resp = r.json()
-    if 'access_token' not in resp:
-        raise RuntimeError(f"Threads 토큰 갱신 실패: {resp}")
-    days = resp.get('expires_in', 0) // 86400
-    print(f"[OK] Threads 토큰 갱신 완료 (유효기간 {days}일)")
-    return resp['access_token']
+    data = response.json()
+    if "access_token" not in data:
+        raise RuntimeError(f"Threads token refresh failed: {data}")
+    print_token_result("Threads", data)
+    return data["access_token"]
 
 
-def update_secret(name: str, value: str):
-    headers = {'Authorization': f'Bearer {GH_PAT}', 'Accept': 'application/vnd.github+json'}
-    key_data = requests.get(
-        f'https://api.github.com/repos/{GH_REPO}/actions/secrets/public-key',
-        headers=headers, timeout=10
-    ).json()
-
-    pk = public.PublicKey(key_data['key'].encode(), encoding.Base64Encoder())
-    encrypted = base64.b64encode(public.SealedBox(pk).encrypt(value.encode())).decode()
-
-    r = requests.put(
-        f'https://api.github.com/repos/{GH_REPO}/actions/secrets/{name}',
-        headers=headers,
-        json={'encrypted_value': encrypted, 'key_id': key_data['key_id']},
-        timeout=10
-    )
-    if r.status_code in (201, 204):
-        print(f"[OK] GitHub Secret '{name}' 업데이트 완료")
+def print_token_result(name: str, data: dict) -> None:
+    expires_in = int(data.get("expires_in", 0))
+    if expires_in:
+        print(f"[OK] {name} token refreshed. Expires in {expires_in // 86400} days.")
     else:
-        raise RuntimeError(f"Secret 업데이트 실패: {r.status_code} {r.text}")
+        print(f"[OK] {name} token refreshed.")
 
 
-if __name__ == '__main__':
-    print("=== 소셜 토큰 갱신 시작 ===")
-    new_ig = refresh_instagram()
-    new_th = refresh_threads()
-    update_secret('IG_ACCESS_TOKEN',      new_ig)
-    update_secret('THREADS_ACCESS_TOKEN', new_th)
-    print("=== 토큰 갱신 완료 ===")
+def update_secret(name: str, value: str) -> None:
+    headers = {
+        "Authorization": f"Bearer {GH_PAT}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    key_response = requests.get(
+        f"https://api.github.com/repos/{GH_REPO}/actions/secrets/public-key",
+        headers=headers,
+        timeout=10,
+    )
+    key_response.raise_for_status()
+    key_data = key_response.json()
+
+    public_key = public.PublicKey(key_data["key"].encode(), encoding.Base64Encoder())
+    encrypted = base64.b64encode(
+        public.SealedBox(public_key).encrypt(value.encode())
+    ).decode()
+
+    secret_response = requests.put(
+        f"https://api.github.com/repos/{GH_REPO}/actions/secrets/{name}",
+        headers=headers,
+        json={"encrypted_value": encrypted, "key_id": key_data["key_id"]},
+        timeout=10,
+    )
+    if secret_response.status_code not in (201, 204):
+        raise RuntimeError(
+            f"GitHub secret update failed for {name}: "
+            f"{secret_response.status_code} {secret_response.text}"
+        )
+    print(f"[OK] GitHub secret updated: {name}")
+
+
+def main() -> None:
+    print("=== Token refresh started ===")
+    refreshed_any = False
+
+    instagram_token = os.environ.get("IG_ACCESS_TOKEN")
+    if instagram_token:
+        update_secret("IG_ACCESS_TOKEN", refresh_instagram(instagram_token))
+        refreshed_any = True
+    else:
+        print("[SKIP] IG_ACCESS_TOKEN is not set.")
+
+    threads_token = os.environ.get("THREADS_ACCESS_TOKEN")
+    if threads_token:
+        update_secret("THREADS_ACCESS_TOKEN", refresh_threads(threads_token))
+        refreshed_any = True
+    else:
+        print("[SKIP] THREADS_ACCESS_TOKEN is not set.")
+
+    if not refreshed_any:
+        raise RuntimeError("No refreshable tokens were provided.")
+
+    print("=== Token refresh completed ===")
+
+
+if __name__ == "__main__":
+    main()
