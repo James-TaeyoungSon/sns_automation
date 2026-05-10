@@ -56,8 +56,11 @@ def _save_article_to_db(art: dict) -> tuple[int | None, str | None]:
                 url=url, title=title, source=source,
                 published_at=art.get("published_at"),
             )
+            if not notion_page_id:
+                telegram_service.send_message(f"⚠️ Notion create_article 반환값 없음: {title[:40]}")
         except Exception as e:
             print(f"[scheduler] Notion create_article 실패 ({title[:30]}): {e}")
+            telegram_service.send_message(f"⚠️ Notion 저장 실패: <code>{str(e)[:150]}</code>")
             notion_page_id = None
         if notion_page_id and article_id:
             with db_conn() as con:
@@ -207,7 +210,11 @@ def _publish_generated(
             threads_ok=threads_ok,
         )
         if not ok:
-            print(f"[scheduler] Notion 발행결과 저장 실패 (page_id={notion_page_id[:8]}...)")
+            msg = f"⚠️ Notion 발행결과 저장 실패 (page={notion_page_id[:8]}...)"
+            print(f"[scheduler] {msg}")
+            telegram_service.send_message(msg)
+    elif not notion_page_id:
+        telegram_service.send_message("⚠️ notion_page_id 없음 — Notion 업데이트 스킵됨")
 
     lines = [f"{'🚀' if publish_index == 0 else '⏰'} <b>발행 완료 (#{publish_index + 1}):</b> {result['blogspot']['title'][:50]}"]
     if blogspot_ok:
