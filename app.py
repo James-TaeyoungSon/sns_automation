@@ -54,6 +54,52 @@ def api_status():
     })
 
 
+@app.route("/api/auth-debug")
+def auth_debug():
+    import os, base64
+    from services import token_store
+    from pathlib import Path
+
+    token_file = cfg.TOKEN_FILE
+    b64_env = os.getenv("BLOGGER_TOKEN_B64", "")
+
+    file_exists = Path(token_file).exists()
+    file_size = Path(token_file).stat().st_size if file_exists else 0
+
+    b64_len = len(b64_env)
+    b64_decode_ok = False
+    b64_decode_err = ""
+    if b64_env:
+        try:
+            base64.b64decode(b64_env).decode("utf-8")
+            b64_decode_ok = True
+        except Exception as e:
+            b64_decode_err = str(e)
+
+    load_result = token_store.load()
+
+    blogger_err = ""
+    blogger_ok = False
+    try:
+        blogger_client.get_service()
+        blogger_ok = True
+    except Exception as e:
+        blogger_err = str(e)
+
+    return jsonify({
+        "token_file_path": str(token_file),
+        "token_file_exists": file_exists,
+        "token_file_size_bytes": file_size,
+        "BLOGGER_TOKEN_B64_length": b64_len,
+        "BLOGGER_TOKEN_B64_set": bool(b64_env),
+        "b64_decode_ok": b64_decode_ok,
+        "b64_decode_error": b64_decode_err,
+        "token_store_load_ok": load_result is not None,
+        "blogger_service_ok": blogger_ok,
+        "blogger_error": blogger_err,
+    })
+
+
 # APScheduler 시작 (테스트 환경 및 Flask 개발서버 리로더 프로세스 제외)
 import os
 _is_reloader = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
