@@ -178,10 +178,12 @@ def _publish_generated(
 
     threads_post_id = ""
     threads_ok = False
+    threads_err = ""
     try:
         threads_post_id = threads_client.post_text(threads_text[:490], link_url=blogspot_url or None)
         threads_ok = True
     except Exception as e:
+        threads_err = str(e)
         print(f"[scheduler] Threads 발행 실패: {e}")
 
     new_status = "published" if (blogspot_ok or threads_ok) else "failed"
@@ -197,13 +199,15 @@ def _publish_generated(
             con.execute("UPDATE articles SET status=? WHERE id=?", (new_status, article_id))
 
     if notion_page_id:
-        notion_store.save_publish_result(
+        ok = notion_store.save_publish_result(
             page_id=notion_page_id,
             blogspot_url=blogspot_url,
             threads_post_id=threads_post_id,
             blogspot_ok=blogspot_ok,
             threads_ok=threads_ok,
         )
+        if not ok:
+            print(f"[scheduler] Notion 발행결과 저장 실패 (page_id={notion_page_id[:8]}...)")
 
     lines = [f"{'🚀' if publish_index == 0 else '⏰'} <b>발행 완료 (#{publish_index + 1}):</b> {result['blogspot']['title'][:50]}"]
     if blogspot_ok:
@@ -213,7 +217,7 @@ def _publish_generated(
     if threads_ok:
         lines.append(f"🧵 Threads 발행됨")
     else:
-        lines.append(f"❌ Threads 실패")
+        lines.append(f"❌ Threads 실패: <code>{threads_err[:200]}</code>")
     telegram_service.send_message("\n".join(lines))
 
 
