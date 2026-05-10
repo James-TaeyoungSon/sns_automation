@@ -2,6 +2,7 @@
 """APScheduler 작업 정의 + Telegram 확인 콜백 핸들러."""
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from datetime import datetime
@@ -169,6 +170,162 @@ def _generate_for_article(
         telegram_service.send_message(f"❌ <b>생성 실패:</b> {title[:40]}\n{e}")
 
 
+# ── 수동 URL 포스팅 ───────────────────────────────────────────────────────────
+
+def _process_manual_url(url: str) -> None:
+    """
+    Telegram에서 URL 직접 전송 시 호출.
+    기사 fetch → 생성 → Blogspot + Threads 발행 → Notion 저장까지 원스톱.
+    """
+    print(f"[scheduler] 수동 URL 처리: {url}")
+    url_hash = hashlib.sha256(url.strip().lower().split("?")[0].encode()).hexdigest()[:32]
+
+    # SQLite 저장
+    article_id: int | None = None
+    notion_page_id: str | None = None
+    title = url  # 일단 URL로 초기화, fetch 후 교체
+
+    try:
+        art = fetch_article(url)
+        title = art.title or url
+
+        with db_conn() as con:
+            con.execute(
+                """INSERT OR IGNORE INTO articles
+                   (url, url_hash, title, source, status)
+                   VALUES (?,?,'수동입력','manual','generating')""",
+                (url, url_hash, title),
+            )
+            row = con.execute(
+                "SELECT id, notion_page_id FROM articles WHERE url_hash=?", (url_hash,)
+            ).fetchone()
+            if row:
+                article_id = row["id"]
+                notion_page_id = row["notion_page_id"]
+
+        # Notion 저장
+        if not notion_page_id:
+            notion_page_id = notion_store.create_article(
+                url=url, title=title, source="manual",
+            )
+            if notion_page_id and article_id:
+                with db_conn() as con:
+                    con.execute(
+                        "UPDATE articles SET notion_page_id=?, title=? WHERE id=?",
+                        (notion_page_id, title, article_id),
+                    )
+
+        telegram_service.send_message(f"📰 <b>{title[:60]}</b>\n\n콘텐츠 생성 중...")
+
+        result = generate_pair(
+            article_url=url,
+            article_title=title,
+            article_text=art.text,
+            log_fn=lambda msg: print(f"  [수동] {msg}"),
+        )
+
+        # SQLite generated_content 저장
+        if article_id:
+            with db_conn() as con:
+                con.execute(
+                    """INSERT INTO generated_content
+                       (article_id, blogspot_title, blogspot_html, threads_text, seo_keyword, image_urls)
+                       VALUES (?,?,?,?,?,?)
+                       ON CONFLICT(article_id) DO UPDATE SET
+                         blogspot_title=excluded.blogspot_title,
+                         blogspot_html=excluded.blogspot_html,
+                         threads_text=excluded.threads_text,
+                         seo_keyword=excluded.seo_keyword,
+                         image_urls=excluded.image_urls""",
+                    (
+                        article_id,
+                        result["blogspot"]["title"],
+                        result["blogspot"]["body_html"],
+                        result["threads"]["threads_text"],
+                        result["seo_keyword"],
+                        json.dumps(result["image_urls"], ensure_ascii=False),
+                    ),
+                )
+
+        # Blogspot 발행
+        telegram_service.send_message("🚀 Blogspot 발행 중...")
+        b_result = blogger_client.publish(
+            title=result["blogspot"]["title"],
+            body_html=result["blogspot"]["body_html"],
+            labels=["AI", "인공지능", result["seo_keyword"] or ""],
+        )
+        blogspot_url = b_result.get("post_url", "")
+        blogspot_ok = b_result["ok"]
+
+        # Threads 발행
+        threads_text = result["threads"]["threads_text"]
+        if blogspot_url:
+            threads_text = threads_text.replace("BLOGSPOT_URL", blogspot_url)
+        if not blogspot_ok:
+            threads_text = threads_text.replace("BLOGSPOT_URL", url)
+
+        threads_post_id = ""
+        threads_ok = False
+        try:
+            threads_post_id = threads_client.post_text(threads_text[:490], link_url=blogspot_url or None)
+            threads_ok = True
+        except Exception as e:
+            print(f"[scheduler] 수동 Threads 발행 실패: {e}")
+
+        # DB 업데이트
+        new_status = "published" if (blogspot_ok or threads_ok) else "failed"
+        if article_id:
+            with db_conn() as con:
+                con.execute(
+                    """INSERT INTO posts
+                       (article_id, blogspot_post_id, blogspot_url, threads_post_id, blogspot_ok, threads_ok)
+                       VALUES (?,?,?,?,?,?)""",
+                    (article_id, b_result.get("post_id",""), blogspot_url,
+                     threads_post_id, int(blogspot_ok), int(threads_ok)),
+                )
+                con.execute("UPDATE articles SET status=? WHERE id=?", (new_status, article_id))
+
+        if notion_page_id:
+            image_url = result["image_urls"][0] if result["image_urls"] else None
+            notion_store.save_content(
+                page_id=notion_page_id,
+                blogspot_title=result["blogspot"]["title"],
+                blogspot_html=result["blogspot"]["body_html"],
+                threads_text=result["threads"]["threads_text"],
+                seo_keyword=result["seo_keyword"],
+                image_url=image_url,
+            )
+            notion_store.save_publish_result(
+                page_id=notion_page_id,
+                blogspot_url=blogspot_url,
+                threads_post_id=threads_post_id,
+                blogspot_ok=blogspot_ok,
+                threads_ok=threads_ok,
+            )
+
+        # 결과 알림
+        lines = ["✅ <b>포스팅 완료!</b>"]
+        if blogspot_ok:
+            lines.append(f"📝 Blogspot: {blogspot_url}")
+        else:
+            lines.append(f"❌ Blogspot 실패: {b_result.get('error','')}")
+        if threads_ok:
+            lines.append(f"🧵 Threads: 발행 완료 (ID: {threads_post_id})")
+        else:
+            lines.append("❌ Threads 실패")
+        telegram_service.send_message("\n".join(lines))
+
+    except Exception as e:
+        print(f"[scheduler] 수동 URL 처리 오류: {e}")
+        telegram_service.send_message(f"❌ <b>오류 발생:</b> {e}")
+        if article_id:
+            with db_conn() as con:
+                con.execute(
+                    "UPDATE articles SET status='failed', error_msg=? WHERE id=?",
+                    (str(e), article_id),
+                )
+
+
 # ── APScheduler 잡 ────────────────────────────────────────────────────────────
 
 def send_digest_job():
@@ -307,11 +464,18 @@ def auto_post_job():
 # ── 스케줄러 생성 ─────────────────────────────────────────────────────────────
 
 def create_scheduler() -> BackgroundScheduler:
-    # Telegram 확인 콜백 등록
+    # Telegram 콜백 등록
     telegram_service.set_confirm_callback(
         lambda articles: threading.Thread(
             target=_process_selected_articles,
             args=(articles,),
+            daemon=True,
+        ).start()
+    )
+    telegram_service.set_url_callback(
+        lambda url: threading.Thread(
+            target=_process_manual_url,
+            args=(url,),
             daemon=True,
         ).start()
     )
@@ -320,10 +484,10 @@ def create_scheduler() -> BackgroundScheduler:
 
     scheduler = BackgroundScheduler(timezone="Asia/Seoul", misfire_grace_time=3600)
 
-    # 다이제스트 발송 (Telegram 사용 시)
+    # 매일 08:00 KST 다이제스트 발송
     scheduler.add_job(
         send_digest_job,
-        trigger=IntervalTrigger(hours=cfg.CRAWL_INTERVAL_HOURS),
+        trigger=CronTrigger(hour=cfg.DIGEST_HOUR, minute=cfg.DIGEST_MINUTE, timezone="Asia/Seoul"),
         id="send_digest",
         replace_existing=True,
     )

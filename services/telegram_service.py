@@ -23,13 +23,20 @@ _offset: int = 0
 _stop_event = threading.Event()
 _poll_thread: threading.Thread | None = None
 
-# 콜백 등록: 기사 확정 시 호출 (외부에서 주입)
-_on_confirm_cb: "Callable[[list[dict]], None] | None" = None
+# 콜백 등록
+_on_confirm_cb = None   # 다이제스트 선택 확정 시
+_on_url_cb = None       # 수동 URL 전송 시
 
 
 def set_confirm_callback(cb) -> None:
     global _on_confirm_cb
     _on_confirm_cb = cb
+
+
+def set_url_callback(cb) -> None:
+    """URL 수동 전송 콜백 등록. cb(url: str) 형태."""
+    global _on_url_cb
+    _on_url_cb = cb
 
 
 def _is_configured() -> bool:
@@ -216,6 +223,38 @@ def _handle_callback(update: dict) -> None:
             ).start()
 
 
+# ── URL 메시지 처리 ───────────────────────────────────────────────────────────
+
+import re as _re
+_URL_RE = _re.compile(r"https?://\S+")
+
+
+def _handle_message(update: dict) -> None:
+    """일반 텍스트 메시지 처리 — URL이 포함되면 수동 포스팅 파이프라인 실행."""
+    msg = update.get("message", {})
+    if not msg:
+        return
+
+    chat_id = str(msg.get("chat", {}).get("id", ""))
+    if chat_id != str(cfg.TELEGRAM_CHAT_ID):
+        return
+
+    text = msg.get("text", "").strip()
+    match = _URL_RE.search(text)
+    if not match:
+        return  # URL 없는 일반 메시지는 무시
+
+    url = match.group(0).rstrip(".,)")
+    send_message(
+        f"🔗 <b>URL 감지!</b>\n<code>{url}</code>\n\n"
+        f"기사를 가져와서 Blogspot + Threads에 포스팅합니다...\n"
+        f"(약 2~3분 소요)"
+    )
+
+    if _on_url_cb:
+        threading.Thread(target=_on_url_cb, args=(url,), daemon=True).start()
+
+
 # ── 업데이트 폴링 ─────────────────────────────────────────────────────────────
 
 def _poll_loop() -> None:
@@ -234,6 +273,8 @@ def _poll_loop() -> None:
                     _offset = upd["update_id"] + 1
                     if "callback_query" in upd:
                         _handle_callback(upd)
+                    elif "message" in upd:
+                        _handle_message(upd)
         except Exception as e:
             if not _stop_event.is_set():
                 print(f"[telegram] 폴링 오류: {e}")

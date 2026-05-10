@@ -41,7 +41,9 @@ class Config:
     TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 
     # 스케줄 설정
-    CRAWL_INTERVAL_HOURS: int = int(os.getenv("CRAWL_INTERVAL_HOURS", "6"))
+    DIGEST_HOUR: int = int(os.getenv("DIGEST_HOUR", "8"))        # KST 다이제스트 발송 시각
+    DIGEST_MINUTE: int = int(os.getenv("DIGEST_MINUTE", "0"))
+    CRAWL_INTERVAL_HOURS: int = int(os.getenv("CRAWL_INTERVAL_HOURS", "6"))  # 수동 크롤 간격
     AUTO_POST_HOUR: int = int(os.getenv("AUTO_POST_HOUR", "9"))  # KST 기준
     AUTO_POST_ENABLED: bool = os.getenv("AUTO_POST_ENABLED", "false").lower() == "true"
     DIGEST_ENABLED: bool = os.getenv("DIGEST_ENABLED", "true").lower() == "true"
