@@ -131,6 +131,9 @@ def _generate_content(
                 )
         if notion_page_id:
             notion_store.update_status(notion_page_id, "실패", str(e))
+        telegram_service.send_message(
+            f"❌ <b>생성 실패:</b> {title[:40]}\n<code>{str(e)[:200]}</code>"
+        )
         return None
 
 
