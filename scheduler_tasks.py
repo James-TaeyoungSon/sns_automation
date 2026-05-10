@@ -18,7 +18,7 @@ from services.news_crawler import crawl_and_rank, crawl_all_sources
 from services.article_reader import fetch_article
 from services.llm_generator import generate_pair
 from services import blogger_client, threads_client
-from services import telegram_service, notion_store
+from services import telegram_service, notion_store, batch_store
 
 
 # ── 공통 헬퍼 ────────────────────────────────────────────────────────────────
@@ -51,10 +51,14 @@ def _save_article_to_db(art: dict) -> tuple[int | None, str | None]:
         return None, None
 
     if not notion_page_id:
-        notion_page_id = notion_store.create_article(
-            url=url, title=title, source=source,
-            published_at=art.get("published_at"),
-        )
+        try:
+            notion_page_id = notion_store.create_article(
+                url=url, title=title, source=source,
+                published_at=art.get("published_at"),
+            )
+        except Exception as e:
+            print(f"[scheduler] Notion create_article 실패 ({title[:30]}): {e}")
+            notion_page_id = None
         if notion_page_id and article_id:
             with db_conn() as con:
                 con.execute(
@@ -225,25 +229,40 @@ def _process_selected_articles(articles: list[dict]) -> None:
         f"콘텐츠 생성 중... (기사당 약 1~2분)"
     )
 
-    success_count = 0
+    generated: list[dict] = []  # 캐시용 결과 목록
     for art in articles:
         article_id, notion_page_id = _save_article_to_db(art)
         if article_id is None:
             continue
-        # 배치 ID 기록
         with db_conn() as con:
             con.execute("UPDATE articles SET batch_id=? WHERE id=?", (batch_id, article_id))
         result = _generate_content(article_id, notion_page_id, art["url"], art["title"])
         if result:
-            success_count += 1
+            generated.append({
+                "article_id": article_id,
+                "notion_page_id": notion_page_id,
+                "title": art["title"],
+                "url": art["url"],
+                "source": art.get("source", ""),
+                "status": "generated",
+                "blogspot_title": result["blogspot"]["title"],
+                "blogspot_html": result["blogspot"]["body_html"],
+                "threads_text": result["threads"]["threads_text"],
+                "seo_keyword": result["seo_keyword"],
+                "image_urls": result["image_urls"],
+                "edited": 0,
+            })
 
-    if success_count == 0:
+    if not generated:
         telegram_service.send_message("❌ 생성된 콘텐츠가 없습니다.")
         return
 
+    # 메모리 캐시에 저장 (SQLite fallback용)
+    batch_store.save(batch_id, generated)
+
     review_url = f"{cfg.APP_BASE_URL}/batch/{batch_id}"
     telegram_service.send_message(
-        f"✅ <b>{success_count}개 생성 완료!</b>\n\n"
+        f"✅ <b>{len(generated)}개 생성 완료!</b>\n\n"
         f"아래 링크에서 내용을 확인·수정 후 발행하세요:\n"
         f"{review_url}"
     )

@@ -13,28 +13,41 @@ from flask import Blueprint, render_template, request, jsonify
 
 from database import db_conn
 from scheduler_tasks import _publish_generated
+from services import batch_store
 
 bp = Blueprint("batch", __name__)
 
 
 @bp.route("/batch/<batch_id>")
 def review(batch_id: str):
-    with db_conn() as con:
-        rows = con.execute(
-            """SELECT a.id, a.title, a.url, a.source, a.status,
-                      gc.blogspot_title, gc.blogspot_html, gc.threads_text,
-                      gc.seo_keyword, gc.image_urls, gc.edited
-               FROM articles a
-               LEFT JOIN generated_content gc ON gc.article_id = a.id
-               WHERE a.batch_id = ?
-               ORDER BY a.id ASC""",
-            (batch_id,),
-        ).fetchall()
+    # 1차: SQLite 조회
+    articles = None
+    try:
+        with db_conn() as con:
+            rows = con.execute(
+                """SELECT a.id, a.title, a.url, a.source, a.status,
+                          gc.blogspot_title, gc.blogspot_html, gc.threads_text,
+                          gc.seo_keyword, gc.image_urls, gc.edited
+                   FROM articles a
+                   LEFT JOIN generated_content gc ON gc.article_id = a.id
+                   WHERE a.batch_id = ?
+                   ORDER BY a.id ASC""",
+                (batch_id,),
+            ).fetchall()
+        if rows:
+            articles = [dict(r) for r in rows]
+    except Exception as e:
+        print(f"[batch] SQLite 조회 실패: {e}")
 
-    if not rows:
+    # 2차: 메모리 캐시 fallback
+    if not articles:
+        cached = batch_store.load(batch_id)
+        if cached:
+            articles = cached
+
+    if not articles:
         return "배치를 찾을 수 없습니다. 텔레그램 링크를 다시 확인하세요.", 404
 
-    articles = [dict(r) for r in rows]
     return render_template("batch_review.html", articles=articles, batch_id=batch_id)
 
 
