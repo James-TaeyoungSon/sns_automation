@@ -20,8 +20,7 @@ def post_text(text: str, link_url: str | None = None) -> str:
     if "|" in token:
         raise RuntimeError("THREADS_ACCESS_TOKEN이 앱/클라이언트 토큰입니다. 유저 액세스 토큰을 사용하세요.")
 
-    user_id = cfg.THREADS_USER_ID
-    threads_user_id = user_id if (user_id and user_id.isdigit()) else "me"
+    threads_user_id = "me"
 
     # 1단계: draft 생성
     url = f"https://graph.threads.net/v1.0/{threads_user_id}/threads"
