@@ -547,6 +547,12 @@ def create_scheduler() -> BackgroundScheduler:
             daemon=True,
         ).start()
     )
+    telegram_service.set_recommend_callback(
+        lambda: threading.Thread(
+            target=send_digest_job,
+            daemon=True,
+        ).start()
+    )
     # Telegram 폴링 시작
     telegram_service.start_polling()
 

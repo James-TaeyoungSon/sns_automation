@@ -26,6 +26,7 @@ _poll_thread: threading.Thread | None = None
 # 콜백 등록
 _on_confirm_cb = None   # 다이제스트 선택 확정 시
 _on_url_cb = None       # 수동 URL 전송 시
+_on_recommend_cb = None # "추천" 키워드 → 즉시 크롤+다이제스트 발송
 
 
 def set_confirm_callback(cb) -> None:
@@ -37,6 +38,12 @@ def set_url_callback(cb) -> None:
     """URL 수동 전송 콜백 등록. cb(url: str) 형태."""
     global _on_url_cb
     _on_url_cb = cb
+
+
+def set_recommend_callback(cb) -> None:
+    """'추천' 키워드 콜백 등록. cb() 형태."""
+    global _on_recommend_cb
+    _on_recommend_cb = cb
 
 
 def _is_configured() -> bool:
@@ -223,14 +230,18 @@ def _handle_callback(update: dict) -> None:
             ).start()
 
 
-# ── URL 메시지 처리 ───────────────────────────────────────────────────────────
+# ── 메시지 처리 ───────────────────────────────────────────────────────────────
 
 import re as _re
 _URL_RE = _re.compile(r"https?://\S+")
+_RECOMMEND_KEYWORDS = {"추천", "기사추천", "뉴스", "뉴스추천", "크롤", "크롤링"}
 
 
 def _handle_message(update: dict) -> None:
-    """일반 텍스트 메시지 처리 — URL이 포함되면 수동 포스팅 파이프라인 실행."""
+    """일반 텍스트 메시지 처리.
+    - '추천' 등 키워드 → 즉시 크롤링 + 다이제스트 발송
+    - URL 포함 → 수동 포스팅 파이프라인
+    """
     msg = update.get("message", {})
     if not msg:
         return
@@ -240,9 +251,19 @@ def _handle_message(update: dict) -> None:
         return
 
     text = msg.get("text", "").strip()
+
+    # 추천 키워드 감지 (공백 제거 후 비교)
+    normalized = text.replace(" ", "").lower()
+    if normalized in _RECOMMEND_KEYWORDS:
+        send_message("🔍 지금 바로 AI 뉴스를 크롤링합니다...\n(약 30초 소요)")
+        if _on_recommend_cb:
+            threading.Thread(target=_on_recommend_cb, daemon=True).start()
+        return
+
+    # URL 감지
     match = _URL_RE.search(text)
     if not match:
-        return  # URL 없는 일반 메시지는 무시
+        return
 
     url = match.group(0).rstrip(".,)")
     send_message(
