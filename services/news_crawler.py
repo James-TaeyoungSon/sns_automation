@@ -25,6 +25,28 @@ _HEADERS = {
 }
 
 _RSS_SOURCES = [
+    # ── 공식 AI 기업 블로그 (1차 소스) ───────────────────────────────────────
+    {
+        "name": "anthropic_news",
+        "url": "https://www.anthropic.com/rss.xml",
+    },
+    {
+        "name": "openai_news",
+        "url": "https://openai.com/news/rss.xml",
+    },
+    {
+        "name": "google_deepmind",
+        "url": "https://deepmind.google/discover/blog/rss.xml",
+    },
+    {
+        "name": "google_ai_blog",
+        "url": "https://blog.google/technology/ai/rss/",
+    },
+    {
+        "name": "meta_ai",
+        "url": "https://ai.meta.com/blog/rss/",
+    },
+    # ── 테크 미디어 ──────────────────────────────────────────────────────────
     {
         "name": "google_news_ko",
         "url": "https://news.google.com/rss/search?q=AI+인공지능+LLM&hl=ko&gl=KR&ceid=KR:ko",
@@ -120,6 +142,13 @@ def _crawl_hackernews(limit: int = 10) -> list[dict]:
 # ── 스코어링 ────────────────────────────────────────────────────────────────
 
 _SOURCE_SCORE = {
+    # 공식 AI 기업 블로그 — 최우선
+    "anthropic_news": 8,
+    "openai_news": 8,
+    "google_deepmind": 7,
+    "google_ai_blog": 7,
+    "meta_ai": 7,
+    # 테크 미디어
     "techcrunch_ai": 5,
     "mit_review": 5,
     "hackernews": 4,
