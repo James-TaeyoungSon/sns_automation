@@ -7,6 +7,7 @@ from database import init_db
 from blueprints.auth import bp as auth_bp
 from blueprints.dashboard import bp as dashboard_bp
 from blueprints.article import bp as article_bp
+from blueprints.batch import bp as batch_bp
 from blueprints.history import bp as history_bp
 from blueprints.settings import bp as settings_bp
 from scheduler_tasks import create_scheduler
@@ -23,6 +24,7 @@ with app.app_context():
 app.register_blueprint(auth_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(article_bp)
+app.register_blueprint(batch_bp)
 app.register_blueprint(history_bp)
 app.register_blueprint(settings_bp)
 

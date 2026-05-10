@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}배치 감수 ({{ articles|length }}개) — AI 포스팅 시스템{% endblock %}
+
+{% block content %}
+<style>
+.batch-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:24px; }
+.batch-header h1 { font-size:1.4rem; margin:0; }
+.article-editor { border:1px solid #ddd; border-radius:8px; padding:20px; margin-bottom:32px; background:#fafafa; }
+.article-editor .article-header { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
+.article-editor .article-num { font-size:1.5rem; font-weight:700; color:#4f46e5; min-width:32px; }
+.article-editor .article-title { font-size:1rem; font-weight:600; flex:1; }
+.article-editor .badge-source { font-size:.75rem; background:#e5e7eb; border-radius:4px; padding:2px 8px; }
+.editor-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+@media(max-width:800px){ .editor-grid { grid-template-columns:1fr; } }
+.field-group { margin-bottom:12px; }
+.field-group label { display:block; font-size:.82rem; font-weight:600; color:#555; margin-bottom:4px; }
+.input-full { width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; font-size:.9rem; box-sizing:border-box; }
+.textarea-large { width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; font-size:.85rem; font-family:monospace; box-sizing:border-box; resize:vertical; min-height:280px; }
+.textarea-medium { width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; font-size:.9rem; box-sizing:border-box; resize:vertical; min-height:140px; }
+.char-counter { font-size:.75rem; color:#888; text-align:right; margin-top:2px; }
+.char-over { color:#dc2626; font-weight:700; }
+.hint { font-size:.78rem; color:#6b7280; margin:2px 0 0; }
+.html-preview-wrap details { margin-top:6px; }
+.html-preview-wrap summary { cursor:pointer; font-size:.82rem; color:#4f46e5; }
+.html-preview { border:1px solid #e5e7eb; padding:10px; border-radius:6px; max-height:300px; overflow-y:auto; background:#fff; font-size:.88rem; margin-top:6px; }
+.schedule-table { width:100%; border-collapse:collapse; margin:12px 0; font-size:.88rem; }
+.schedule-table th,td { padding:6px 12px; border-bottom:1px solid #e5e7eb; text-align:left; }
+.schedule-table th { background:#f3f4f6; }
+.publish-bar { position:sticky; bottom:0; background:#fff; border-top:2px solid #4f46e5; padding:16px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; z-index:100; }
+.publish-bar .btn-publish { background:#4f46e5; color:#fff; border:none; padding:12px 28px; border-radius:8px; font-size:1rem; font-weight:700; cursor:pointer; }
+.publish-bar .btn-publish:hover { background:#4338ca; }
+.publish-bar .btn-publish:disabled { background:#9ca3af; cursor:not-allowed; }
+#publish-status { font-size:.9rem; color:#4f46e5; }
+.schedule-preview { font-size:.82rem; color:#6b7280; }
+.status-failed { color:#dc2626; }
+.status-generated { color:#059669; }
+</style>
+
+<div class="batch-header">
+  <div>
+    <a class="btn btn-sm btn-secondary" href="{{ url_for('dashboard.index') }}">← 대시보드</a>
+    <h1 style="margin-top:8px;">📋 콘텐츠 감수 — {{ articles|length }}개 기사</h1>
+  </div>
+  <div class="schedule-preview">
+    {% for art in articles %}
+      <div>
+        <strong>{{ loop.index }}.</strong>
+        {{ art.title[:40] }}{% if art.title|length > 40 %}…{% endif %}
+        → <em>{% if loop.first %}즉시{% else %}{{ loop.index0 }}시간 후{% endif %} 발행</em>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<form id="batch-form">
+{% for art in articles %}
+<div class="article-editor" id="editor-{{ art.id }}">
+  <div class="article-header">
+    <span class="article-num">{{ loop.index }}</span>
+    <div>
+      <div class="article-title">{{ art.title }}</div>
+      <span class="badge-source">{{ art.source or 'unknown' }}</span>
+      <a href="{{ art.url }}" target="_blank" rel="noopener" style="font-size:.78rem; margin-left:6px;">원문 ↗</a>
+    </div>
+    <span class="badge badge-{{ art.status }}">{{ art.status }}</span>
+  </div>
+
+  {% if art.blogspot_html %}
+  <input type="hidden" name="article_id_{{ loop.index }}" value="{{ art.id }}">
+
+  <div class="editor-grid">
+    <!-- Blogspot 편집 -->
+    <div>
+      <h3 style="font-size:.95rem; margin:0 0 10px; color:#1f2937;">📝 Blogspot</h3>
+      <div class="field-group">
+        <label>포스트 제목</label>
+        <input type="text" class="input-full blogspot-title" data-id="{{ art.id }}"
+               value="{{ art.blogspot_title or '' }}">
+      </div>
+      <div class="field-group">
+        <label>본문 HTML</label>
+        <textarea class="textarea-large blogspot-html" data-id="{{ art.id }}"
+                  rows="18">{{ art.blogspot_html or '' }}</textarea>
+      </div>
+      <div class="html-preview-wrap">
+        <details>
+          <summary>HTML 미리보기 토글</summary>
+          <div class="html-preview" id="preview-{{ art.id }}">{{ art.blogspot_html | safe }}</div>
+        </details>
+      </div>
+    </div>
+
+    <!-- Threads 편집 -->
+    <div>
+      <h3 style="font-size:.95rem; margin:0 0 10px; color:#1f2937;">🧵 Threads</h3>
+      <div class="field-group">
+        <label>포스트 텍스트</label>
+        <textarea class="textarea-medium threads-text" data-id="{{ art.id }}"
+                  maxlength="490" rows="8">{{ art.threads_text or '' }}</textarea>
+        <div class="char-counter">
+          <span class="threads-len-{{ art.id }}">{{ (art.threads_text or '')|length }}</span>/480자
+        </div>
+        <p class="hint">※ BLOGSPOT_URL은 발행 시 실제 URL로 자동 교체됩니다.</p>
+      </div>
+      {% if art.seo_keyword %}
+      <p class="hint">SEO 키워드: <strong>{{ art.seo_keyword }}</strong></p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% else %}
+  <div style="color:#dc2626; padding:12px; background:#fef2f2; border-radius:6px;">
+    ⚠️ 이 기사는 콘텐츠 생성에 실패했습니다. 발행 목록에서 제외됩니다.
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+</form>
+
+<!-- 발행 바 -->
+<div class="publish-bar">
+  <button class="btn-publish" id="publish-btn" onclick="publishAll()">
+    🚀 발행 시작 ({{ articles|length }}개 · 1시간 간격)
+  </button>
+  <span id="publish-status"></span>
+</div>
+
+<script>
+// Threads 글자 수 실시간
+document.querySelectorAll('.threads-text').forEach(ta => {
+  const id = ta.dataset.id;
+  const counter = document.querySelector(`.threads-len-${id}`);
+  function update() {
+    const len = ta.value.length;
+    counter.textContent = len;
+    counter.classList.toggle('char-over', len > 480);
+  }
+  ta.addEventListener('input', update);
+  update();
+});
+
+// HTML 미리보기 실시간
+document.querySelectorAll('.blogspot-html').forEach(ta => {
+  const id = ta.dataset.id;
+  const preview = document.getElementById(`preview-${id}`);
+  if (preview) {
+    ta.addEventListener('input', () => { preview.innerHTML = ta.value; });
+  }
+});
+
+// 배치 발행
+async function publishAll() {
+  const btn = document.getElementById('publish-btn');
+  const statusEl = document.getElementById('publish-status');
+
+  // 편집 데이터 수집
+  const articleIds = new Set();
+  document.querySelectorAll('.blogspot-title').forEach(el => articleIds.add(el.dataset.id));
+
+  const articles = [];
+  articleIds.forEach(id => {
+    const titleEl  = document.querySelector(`.blogspot-title[data-id="${id}"]`);
+    const htmlEl   = document.querySelector(`.blogspot-html[data-id="${id}"]`);
+    const threadEl = document.querySelector(`.threads-text[data-id="${id}"]`);
+    if (!titleEl) return;
+    articles.push({
+      article_id: parseInt(id),
+      blogspot_title: titleEl.value,
+      blogspot_html: htmlEl ? htmlEl.value : '',
+      threads_text: threadEl ? threadEl.value : '',
+    });
+  });
+
+  if (articles.length === 0) {
+    alert('발행할 기사가 없습니다.');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ 발행 스케줄 등록 중...';
+  statusEl.textContent = '';
+
+  try {
+    const resp = await fetch(`/batch/{{ batch_id }}/publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ articles }),
+    });
+    const data = await resp.json();
+
+    if (data.ok) {
+      btn.textContent = `✅ 발행 스케줄 완료 (${data.scheduled}개)`;
+
+      let msg = '<br><strong>발행 스케줄:</strong><table class="schedule-table"><tr><th>#</th><th>기사</th><th>발행 시각</th></tr>';
+      (data.schedule || []).forEach(s => {
+        msg += `<tr><td>${s.index}</td><td>${s.title.substring(0,40)}</td><td>${s.publish_at}</td></tr>`;
+      });
+      msg += '</table><p>Telegram으로 각 발행 완료 알림을 받을 수 있습니다.</p>';
+      statusEl.innerHTML = msg;
+    } else {
+      btn.disabled = false;
+      btn.textContent = '🚀 발행 시작';
+      statusEl.textContent = `오류: ${data.error}`;
+    }
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '🚀 발행 시작';
+    statusEl.textContent = `오류: ${e.message}`;
+  }
+}
+</script>
+{% endblock %}

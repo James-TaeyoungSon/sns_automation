@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import uuid
 from datetime import datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -203,51 +204,38 @@ def _publish_generated(
 
 def _process_selected_articles(articles: list[dict]) -> None:
     """
-    Telegram 선택 확정 → 전체 생성 → 발행 스케줄 (1번 즉시, 이후 1시간 간격).
+    Telegram 선택 확정 → 전체 생성 → 웹 감수 링크 전송.
+    실제 발행은 /batch/<batch_id> 페이지에서 사용자가 확인 후 실행.
     """
+    batch_id = uuid.uuid4().hex[:12]
     count = len(articles)
     telegram_service.send_message(
-        f"⚙️ <b>{count}개 기사 처리 시작</b>\n"
+        f"⚙️ <b>{count}개 기사 생성 시작</b>\n"
         f"콘텐츠 생성 중... (기사당 약 1~2분)"
     )
 
-    # Step 1: 저장 + 생성 (순차)
-    generated = []  # [(article_id, notion_page_id, title, result), ...]
+    success_count = 0
     for art in articles:
         article_id, notion_page_id = _save_article_to_db(art)
         if article_id is None:
             continue
+        # 배치 ID 기록
+        with db_conn() as con:
+            con.execute("UPDATE articles SET batch_id=? WHERE id=?", (batch_id, article_id))
         result = _generate_content(article_id, notion_page_id, art["url"], art["title"])
         if result:
-            generated.append((article_id, notion_page_id, art["title"], result))
+            success_count += 1
 
-    if not generated:
+    if success_count == 0:
         telegram_service.send_message("❌ 생성된 콘텐츠가 없습니다.")
         return
 
-    # Step 2: 발행 스케줄 안내
-    now = datetime.now()
-    lines = [f"✅ <b>{len(generated)}개 생성 완료! 발행 스케줄:</b>"]
-    for i, (_, _, title, _) in enumerate(generated):
-        pub_time = now + timedelta(hours=i)
-        tag = "즉시" if i == 0 else f"{i}시간 후 ({pub_time.strftime('%H:%M')})"
-        lines.append(f"  {i + 1}. {tag} — {title[:35]}")
-    telegram_service.send_message("\n".join(lines))
-
-    # Step 3: 발행 (1번 즉시, 이후 1시간 간격)
-    for i, (article_id, notion_page_id, title, result) in enumerate(generated):
-        delay_sec = i * 3600
-        if delay_sec == 0:
-            _publish_generated(article_id, notion_page_id, title, result, publish_index=0)
-        else:
-            t = threading.Timer(
-                delay_sec,
-                _publish_generated,
-                args=[article_id, notion_page_id, title, result, i],
-            )
-            t.daemon = True
-            t.start()
-            print(f"[scheduler] {title[:30]} → {delay_sec // 3600}시간 후 발행 예약")
+    review_url = f"{cfg.APP_BASE_URL}/batch/{batch_id}"
+    telegram_service.send_message(
+        f"✅ <b>{success_count}개 생성 완료!</b>\n\n"
+        f"아래 링크에서 내용을 확인·수정 후 발행하세요:\n"
+        f"{review_url}"
+    )
 
 
 # ── 수동 URL 포스팅 ───────────────────────────────────────────────────────────

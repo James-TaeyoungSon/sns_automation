@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS generated_content (
     threads_text   TEXT,
     seo_keyword    TEXT,
     image_urls     TEXT,
-    generated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+    generated_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    edited         INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS posts (
@@ -67,11 +68,16 @@ def init_db():
     for col, definition in [
         ("notion_page_id", "TEXT"),
         ("score", "REAL DEFAULT 0"),
+        ("batch_id", "TEXT"),
     ]:
         try:
             con.execute(f"ALTER TABLE articles ADD COLUMN {col} {definition}")
         except sqlite3.OperationalError:
             pass  # 이미 존재하면 무시
+    try:
+        con.execute("ALTER TABLE generated_content ADD COLUMN edited INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     con.commit()
     con.close()
 
