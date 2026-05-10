@@ -207,11 +207,13 @@ def _publish_generated(
 
     lines = [f"{'🚀' if publish_index == 0 else '⏰'} <b>발행 완료 (#{publish_index + 1}):</b> {result['blogspot']['title'][:50]}"]
     if blogspot_ok:
-        lines.append(f"📝 {blogspot_url}")
+        lines.append(f"📝 Blogspot: {blogspot_url}")
+    else:
+        lines.append(f"❌ Blogspot 실패: <code>{str(b_result.get('error', '알 수 없는 오류'))[:150]}</code>")
     if threads_ok:
         lines.append(f"🧵 Threads 발행됨")
-    if not blogspot_ok and not threads_ok:
-        lines.append("❌ 발행 실패")
+    else:
+        lines.append(f"❌ Threads 실패")
     telegram_service.send_message("\n".join(lines))
 
 
@@ -239,7 +241,7 @@ def _process_selected_articles(articles: list[dict]) -> None:
         result = _generate_content(article_id, notion_page_id, art["url"], art["title"])
         if result:
             generated.append({
-                "article_id": article_id,
+                "id": article_id,           # SQLite row와 키 이름 통일
                 "notion_page_id": notion_page_id,
                 "title": art["title"],
                 "url": art["url"],
