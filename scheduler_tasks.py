@@ -259,10 +259,16 @@ def _process_selected_articles(articles: list[dict]) -> None:
         telegram_service.send_message("❌ 생성된 콘텐츠가 없습니다.")
         return
 
-    # 메모리 캐시에 저장 (SQLite fallback용)
-    batch_store.save(batch_id, generated)
+    # Notion page ID가 있으면 Notion 기반 URL 사용 (Render 재시작에도 유효)
+    notion_ids = [g["notion_page_id"] for g in generated if g.get("notion_page_id")]
+    if notion_ids:
+        pages_param = ",".join(notion_ids)
+        review_url = f"{cfg.APP_BASE_URL}/batch/review?pages={pages_param}"
+    else:
+        # Notion 미설정 환경: 메모리 캐시 fallback (재시작 시 무효)
+        batch_store.save(batch_id, generated)
+        review_url = f"{cfg.APP_BASE_URL}/batch/{batch_id}"
 
-    review_url = f"{cfg.APP_BASE_URL}/batch/{batch_id}"
     telegram_service.send_message(
         f"✅ <b>{len(generated)}개 생성 완료!</b>\n\n"
         f"아래 링크에서 내용을 확인·수정 후 발행하세요:\n"

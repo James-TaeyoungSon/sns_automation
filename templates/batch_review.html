@@ -65,8 +65,12 @@
     <span class="badge badge-{{ art.status }}">{{ art.status }}</span>
   </div>
 
+  {% set art_key = loop.index %}
   {% if art.blogspot_html %}
-  <input type="hidden" name="article_id_{{ loop.index }}" value="{{ art.id }}">
+  <input type="hidden" class="article-meta" data-key="{{ art_key }}"
+         data-article-id="{{ art.id or '' }}"
+         data-notion-id="{{ art.notion_page_id or '' }}"
+         data-seo="{{ art.seo_keyword or '' }}">
 
   <div class="editor-grid">
     <!-- Blogspot 편집 -->
@@ -74,18 +78,18 @@
       <h3 style="font-size:.95rem; margin:0 0 10px; color:#1f2937;">📝 Blogspot</h3>
       <div class="field-group">
         <label>포스트 제목</label>
-        <input type="text" class="input-full blogspot-title" data-id="{{ art.id }}"
+        <input type="text" class="input-full blogspot-title" data-key="{{ art_key }}"
                value="{{ art.blogspot_title or '' }}">
       </div>
       <div class="field-group">
         <label>본문 HTML</label>
-        <textarea class="textarea-large blogspot-html" data-id="{{ art.id }}"
+        <textarea class="textarea-large blogspot-html" data-key="{{ art_key }}"
                   rows="18">{{ art.blogspot_html or '' }}</textarea>
       </div>
       <div class="html-preview-wrap">
         <details>
           <summary>HTML 미리보기 토글</summary>
-          <div class="html-preview" id="preview-{{ art.id }}">{{ art.blogspot_html | safe }}</div>
+          <div class="html-preview" id="preview-{{ art_key }}">{{ art.blogspot_html | safe }}</div>
         </details>
       </div>
     </div>
@@ -95,10 +99,10 @@
       <h3 style="font-size:.95rem; margin:0 0 10px; color:#1f2937;">🧵 Threads</h3>
       <div class="field-group">
         <label>포스트 텍스트</label>
-        <textarea class="textarea-medium threads-text" data-id="{{ art.id }}"
+        <textarea class="textarea-medium threads-text" data-key="{{ art_key }}"
                   maxlength="490" rows="8">{{ art.threads_text or '' }}</textarea>
         <div class="char-counter">
-          <span class="threads-len-{{ art.id }}">{{ (art.threads_text or '')|length }}</span>/480자
+          <span class="threads-len-{{ art_key }}">{{ (art.threads_text or '')|length }}</span>/480자
         </div>
         <p class="hint">※ BLOGSPOT_URL은 발행 시 실제 URL로 자동 교체됩니다.</p>
       </div>
@@ -126,10 +130,15 @@
 </div>
 
 <script>
+const BATCH_ID = '{{ batch_id }}';
+const PUBLISH_URL = BATCH_ID === 'notion'
+  ? '/batch/notion/publish'
+  : `/batch/${BATCH_ID}/publish`;
+
 // Threads 글자 수 실시간
 document.querySelectorAll('.threads-text').forEach(ta => {
-  const id = ta.dataset.id;
-  const counter = document.querySelector(`.threads-len-${id}`);
+  const key = ta.dataset.key;
+  const counter = document.querySelector(`.threads-len-${key}`);
   function update() {
     const len = ta.value.length;
     counter.textContent = len;
@@ -141,8 +150,8 @@ document.querySelectorAll('.threads-text').forEach(ta => {
 
 // HTML 미리보기 실시간
 document.querySelectorAll('.blogspot-html').forEach(ta => {
-  const id = ta.dataset.id;
-  const preview = document.getElementById(`preview-${id}`);
+  const key = ta.dataset.key;
+  const preview = document.getElementById(`preview-${key}`);
   if (preview) {
     ta.addEventListener('input', () => { preview.innerHTML = ta.value; });
   }
@@ -153,18 +162,24 @@ async function publishAll() {
   const btn = document.getElementById('publish-btn');
   const statusEl = document.getElementById('publish-status');
 
-  // 편집 데이터 수집
-  const articleIds = new Set();
-  document.querySelectorAll('.blogspot-title').forEach(el => articleIds.add(el.dataset.id));
+  // 편집 데이터 수집 (data-key 기반)
+  const keys = new Set();
+  document.querySelectorAll('.blogspot-title').forEach(el => keys.add(el.dataset.key));
 
   const articles = [];
-  articleIds.forEach(id => {
-    const titleEl  = document.querySelector(`.blogspot-title[data-id="${id}"]`);
-    const htmlEl   = document.querySelector(`.blogspot-html[data-id="${id}"]`);
-    const threadEl = document.querySelector(`.threads-text[data-id="${id}"]`);
+  keys.forEach(key => {
+    const meta     = document.querySelector(`.article-meta[data-key="${key}"]`);
+    const titleEl  = document.querySelector(`.blogspot-title[data-key="${key}"]`);
+    const htmlEl   = document.querySelector(`.blogspot-html[data-key="${key}"]`);
+    const threadEl = document.querySelector(`.threads-text[data-key="${key}"]`);
     if (!titleEl) return;
+    const articleId = meta ? (parseInt(meta.dataset.articleId) || null) : null;
+    const notionId  = meta ? (meta.dataset.notionId || '') : '';
+    const seoKw     = meta ? (meta.dataset.seo || '') : '';
     articles.push({
-      article_id: parseInt(id),
+      article_id: articleId,
+      notion_page_id: notionId,
+      seo_keyword: seoKw,
       blogspot_title: titleEl.value,
       blogspot_html: htmlEl ? htmlEl.value : '',
       threads_text: threadEl ? threadEl.value : '',
@@ -181,7 +196,7 @@ async function publishAll() {
   statusEl.textContent = '';
 
   try {
-    const resp = await fetch(`/batch/{{ batch_id }}/publish`, {
+    const resp = await fetch(PUBLISH_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ articles }),

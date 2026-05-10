@@ -13,9 +13,139 @@ from flask import Blueprint, render_template, request, jsonify
 
 from database import db_conn
 from scheduler_tasks import _publish_generated
-from services import batch_store
+from services import batch_store, notion_store
 
 bp = Blueprint("batch", __name__)
+
+
+@bp.route("/batch/review")
+def review_from_notion():
+    """Notion page ID 목록으로 배치 감수 페이지 구성 (Render 재시작에 강함)."""
+    pages_param = request.args.get("pages", "")
+    if not pages_param:
+        return "Notion 페이지 ID가 없습니다.", 400
+
+    notion_ids = [p.strip() for p in pages_param.split(",") if p.strip()]
+    articles = []
+    for notion_id in notion_ids:
+        props = notion_store.get_article_props(notion_id)
+        if not props:
+            continue
+        html = notion_store.get_page_html(notion_id)
+
+        article_id = None
+        try:
+            with db_conn() as con:
+                row = con.execute(
+                    "SELECT id FROM articles WHERE notion_page_id=?", (notion_id,)
+                ).fetchone()
+                if row:
+                    article_id = row["id"]
+        except Exception:
+            pass
+
+        articles.append({
+            "id": article_id,
+            "notion_page_id": notion_id,
+            "title": props.get("title", ""),
+            "url": props.get("url", ""),
+            "source": props.get("source", ""),
+            "status": props.get("status", ""),
+            "blogspot_title": props.get("blogspot_title", ""),
+            "blogspot_html": html,
+            "threads_text": props.get("threads_text", ""),
+            "seo_keyword": props.get("seo_keyword", ""),
+            "image_urls": [],
+            "edited": 0,
+        })
+
+    if not articles:
+        return "Notion에서 기사를 불러오지 못했습니다. Notion 설정을 확인하세요.", 404
+
+    return render_template("batch_review.html", articles=articles, batch_id="notion")
+
+
+@bp.route("/batch/notion/publish", methods=["POST"])
+def publish_batch_notion():
+    """Notion 기반 배치 발행 (SQLite 없이도 동작)."""
+    data = request.get_json(force=True)
+    edits: list[dict] = data.get("articles", [])
+
+    if not edits:
+        return jsonify({"ok": False, "error": "발행할 기사가 없습니다."}), 404
+
+    now = datetime.now()
+    schedule = []
+
+    for i, edit in enumerate(edits):
+        notion_page_id = edit.get("notion_page_id") or None
+        article_id = edit.get("article_id") or None
+        title = edit.get("blogspot_title") or f"기사 {i + 1}"
+
+        # SQLite article_id 복구 시도
+        if not article_id and notion_page_id:
+            try:
+                with db_conn() as con:
+                    row = con.execute(
+                        "SELECT id FROM articles WHERE notion_page_id=?", (notion_page_id,)
+                    ).fetchone()
+                    if row:
+                        article_id = row["id"]
+            except Exception:
+                pass
+
+        # 편집 내용 SQLite 저장
+        if article_id:
+            try:
+                with db_conn() as con:
+                    con.execute(
+                        """INSERT INTO generated_content
+                           (article_id, blogspot_title, blogspot_html, threads_text, edited)
+                           VALUES (?,?,?,?,1)
+                           ON CONFLICT(article_id) DO UPDATE SET
+                             blogspot_title=excluded.blogspot_title,
+                             blogspot_html=excluded.blogspot_html,
+                             threads_text=excluded.threads_text,
+                             edited=1, generated_at=datetime('now')""",
+                        (article_id, edit.get("blogspot_title"),
+                         edit.get("blogspot_html"), edit.get("threads_text")),
+                    )
+            except Exception as e:
+                print(f"[batch/notion] SQLite 저장 실패 (무시): {e}")
+
+        result = {
+            "blogspot": {
+                "title": edit.get("blogspot_title", ""),
+                "body_html": edit.get("blogspot_html", ""),
+            },
+            "threads": {"threads_text": edit.get("threads_text", "")},
+            "seo_keyword": edit.get("seo_keyword", ""),
+            "image_urls": [],
+        }
+
+        pub_time = now + timedelta(hours=i)
+        schedule.append({
+            "index": i + 1,
+            "title": title[:50],
+            "publish_at": "즉시" if i == 0 else pub_time.strftime("%H:%M"),
+        })
+
+        if i == 0:
+            threading.Thread(
+                target=_publish_generated,
+                args=[article_id, notion_page_id, title, result, 0],
+                daemon=True,
+            ).start()
+        else:
+            t = threading.Timer(
+                i * 3600,
+                _publish_generated,
+                args=[article_id, notion_page_id, title, result, i],
+            )
+            t.daemon = True
+            t.start()
+
+    return jsonify({"ok": True, "scheduled": len(edits), "schedule": schedule})
 
 
 @bp.route("/batch/<batch_id>")
