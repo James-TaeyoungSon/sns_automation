@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -20,83 +20,57 @@ from services import blogger_client, threads_client
 from services import telegram_service, notion_store
 
 
-# ── Telegram 확인 콜백 ────────────────────────────────────────────────────────
+# ── 공통 헬퍼 ────────────────────────────────────────────────────────────────
 
-def _process_selected_articles(articles: list[dict]) -> None:
-    """
-    Telegram에서 선택 확정된 기사 처리:
-    1. 각 기사 → SQLite + Notion에 저장
-    2. 각 기사 → 콘텐츠 생성 (article_reader + llm_generator)
-    3. Notion 페이지 업데이트 + SQLite generated_content 저장
-    """
-    saved_ids = []
-    for art in articles:
-        url = art["url"]
-        title = art["title"]
-        source = art.get("source", "")
-        url_hash = art["url_hash"]
+def _save_article_to_db(art: dict) -> tuple[int | None, str | None]:
+    """기사를 SQLite + Notion에 저장 → (article_id, notion_page_id) 반환."""
+    url, title = art["url"], art["title"]
+    source = art.get("source", "")
+    url_hash = art["url_hash"]
+    article_id: int | None = None
+    notion_page_id: str | None = None
 
-        # SQLite 저장
-        article_id: int | None = None
-        notion_page_id: str | None = None
+    try:
+        with db_conn() as con:
+            con.execute(
+                """INSERT OR IGNORE INTO articles
+                   (url, url_hash, title, source, published_at, status, score)
+                   VALUES (?,?,?,?,?,'new',?)""",
+                (url, url_hash, title, source,
+                 art.get("published_at"), art.get("score", 0)),
+            )
+            row = con.execute(
+                "SELECT id, notion_page_id FROM articles WHERE url_hash=?", (url_hash,)
+            ).fetchone()
+            if row:
+                article_id = row["id"]
+                notion_page_id = row["notion_page_id"]
+    except Exception as e:
+        print(f"[scheduler] SQLite 저장 실패 ({title[:30]}): {e}")
+        return None, None
 
-        try:
+    if not notion_page_id:
+        notion_page_id = notion_store.create_article(
+            url=url, title=title, source=source,
+            published_at=art.get("published_at"),
+        )
+        if notion_page_id and article_id:
             with db_conn() as con:
                 con.execute(
-                    """INSERT OR IGNORE INTO articles
-                       (url, url_hash, title, source, published_at, status, score)
-                       VALUES (?,?,?,?,?,'new',?)""",
-                    (url, url_hash, title, source,
-                     art.get("published_at"), art.get("score", 0)),
+                    "UPDATE articles SET notion_page_id=? WHERE id=?",
+                    (notion_page_id, article_id),
                 )
-                row = con.execute(
-                    "SELECT id, notion_page_id FROM articles WHERE url_hash=?",
-                    (url_hash,),
-                ).fetchone()
-                if row:
-                    article_id = row["id"]
-                    notion_page_id = row["notion_page_id"]
-        except Exception as e:
-            print(f"[scheduler] SQLite 저장 실패 ({title[:30]}): {e}")
-            continue
-
-        # Notion 저장 (notion_page_id 미설정 시에만)
-        if not notion_page_id:
-            notion_page_id = notion_store.create_article(
-                url=url, title=title, source=source,
-                published_at=art.get("published_at"),
-            )
-            if notion_page_id and article_id:
-                try:
-                    with db_conn() as con:
-                        con.execute(
-                            "UPDATE articles SET notion_page_id=? WHERE id=?",
-                            (notion_page_id, article_id),
-                        )
-                except Exception:
-                    pass
-
-        saved_ids.append((article_id, notion_page_id, url, title))
-
-    count = len(saved_ids)
-    telegram_service.send_message(
-        f"✅ <b>{count}개 기사 저장 완료</b>\n콘텐츠 생성을 시작합니다 (기사당 약 1~2분)..."
-    )
-
-    # 각 기사 콘텐츠 생성
-    for article_id, notion_page_id, url, title in saved_ids:
-        _generate_for_article(article_id, notion_page_id, url, title)
+    return article_id, notion_page_id
 
 
-def _generate_for_article(
+def _generate_content(
     article_id: int | None,
     notion_page_id: str | None,
     url: str,
     title: str,
-) -> None:
-    """단일 기사 콘텐츠 생성 → SQLite + Notion 업데이트."""
-    print(f"[scheduler] 콘텐츠 생성 시작: {title[:50]}")
-
+) -> dict | None:
+    """콘텐츠 생성(fetch + LLM) → SQLite + Notion 저장 → result dict 반환. 실패 시 None."""
+    print(f"[scheduler] 생성 시작: {title[:50]}")
     if article_id:
         with db_conn() as con:
             con.execute("UPDATE articles SET status='generating' WHERE id=?", (article_id,))
@@ -112,7 +86,6 @@ def _generate_for_article(
             log_fn=lambda msg: print(f"  [{title[:20]}] {msg}"),
         )
 
-        # SQLite 저장
         if article_id:
             with db_conn() as con:
                 con.execute(
@@ -126,36 +99,26 @@ def _generate_for_article(
                          seo_keyword=excluded.seo_keyword,
                          image_urls=excluded.image_urls,
                          generated_at=datetime('now')""",
-                    (
-                        article_id,
-                        result["blogspot"]["title"],
-                        result["blogspot"]["body_html"],
-                        result["threads"]["threads_text"],
-                        result["seo_keyword"],
-                        json.dumps(result["image_urls"], ensure_ascii=False),
-                    ),
+                    (article_id, result["blogspot"]["title"],
+                     result["blogspot"]["body_html"],
+                     result["threads"]["threads_text"],
+                     result["seo_keyword"],
+                     json.dumps(result["image_urls"], ensure_ascii=False)),
                 )
-                con.execute(
-                    "UPDATE articles SET status='generated' WHERE id=?", (article_id,)
-                )
+                con.execute("UPDATE articles SET status='generated' WHERE id=?", (article_id,))
 
-        # Notion 업데이트
         if notion_page_id:
-            image_url = result["image_urls"][0] if result["image_urls"] else None
             notion_store.save_content(
                 page_id=notion_page_id,
                 blogspot_title=result["blogspot"]["title"],
                 blogspot_html=result["blogspot"]["body_html"],
                 threads_text=result["threads"]["threads_text"],
                 seo_keyword=result["seo_keyword"],
-                image_url=image_url,
+                image_url=result["image_urls"][0] if result["image_urls"] else None,
             )
 
-        telegram_service.send_message(
-            f"✅ <b>생성 완료:</b> {result['blogspot']['title'][:60]}\n"
-            f"웹 UI에서 확인 후 발행하세요."
-        )
         print(f"[scheduler] 생성 완료: {title[:50]}")
+        return result
 
     except Exception as e:
         print(f"[scheduler] 생성 실패 ({title[:30]}): {e}")
@@ -167,7 +130,124 @@ def _generate_for_article(
                 )
         if notion_page_id:
             notion_store.update_status(notion_page_id, "실패", str(e))
-        telegram_service.send_message(f"❌ <b>생성 실패:</b> {title[:40]}\n{e}")
+        return None
+
+
+def _publish_generated(
+    article_id: int | None,
+    notion_page_id: str | None,
+    title: str,
+    result: dict,
+    publish_index: int = 0,
+) -> None:
+    """생성된 콘텐츠를 Blogspot + Threads에 발행."""
+    print(f"[scheduler] 발행 시작 (#{publish_index + 1}): {title[:50]}")
+    if article_id:
+        with db_conn() as con:
+            con.execute("UPDATE articles SET status='publishing' WHERE id=?", (article_id,))
+
+    b_result = blogger_client.publish(
+        title=result["blogspot"]["title"],
+        body_html=result["blogspot"]["body_html"],
+        labels=["AI", "인공지능", result["seo_keyword"] or ""],
+    )
+    blogspot_url = b_result.get("post_url", "")
+    blogspot_ok = b_result["ok"]
+
+    threads_text = result["threads"]["threads_text"]
+    if blogspot_url:
+        threads_text = threads_text.replace("BLOGSPOT_URL", blogspot_url)
+    elif "BLOGSPOT_URL" in threads_text:
+        threads_text = threads_text.replace("BLOGSPOT_URL", result.get("article_url", ""))
+
+    threads_post_id = ""
+    threads_ok = False
+    try:
+        threads_post_id = threads_client.post_text(threads_text[:490], link_url=blogspot_url or None)
+        threads_ok = True
+    except Exception as e:
+        print(f"[scheduler] Threads 발행 실패: {e}")
+
+    new_status = "published" if (blogspot_ok or threads_ok) else "failed"
+    if article_id:
+        with db_conn() as con:
+            con.execute(
+                """INSERT INTO posts
+                   (article_id, blogspot_post_id, blogspot_url, threads_post_id, blogspot_ok, threads_ok)
+                   VALUES (?,?,?,?,?,?)""",
+                (article_id, b_result.get("post_id", ""), blogspot_url,
+                 threads_post_id, int(blogspot_ok), int(threads_ok)),
+            )
+            con.execute("UPDATE articles SET status=? WHERE id=?", (new_status, article_id))
+
+    if notion_page_id:
+        notion_store.save_publish_result(
+            page_id=notion_page_id,
+            blogspot_url=blogspot_url,
+            threads_post_id=threads_post_id,
+            blogspot_ok=blogspot_ok,
+            threads_ok=threads_ok,
+        )
+
+    lines = [f"{'🚀' if publish_index == 0 else '⏰'} <b>발행 완료 (#{publish_index + 1}):</b> {result['blogspot']['title'][:50]}"]
+    if blogspot_ok:
+        lines.append(f"📝 {blogspot_url}")
+    if threads_ok:
+        lines.append(f"🧵 Threads 발행됨")
+    if not blogspot_ok and not threads_ok:
+        lines.append("❌ 발행 실패")
+    telegram_service.send_message("\n".join(lines))
+
+
+# ── Telegram 확인 콜백 ────────────────────────────────────────────────────────
+
+def _process_selected_articles(articles: list[dict]) -> None:
+    """
+    Telegram 선택 확정 → 전체 생성 → 발행 스케줄 (1번 즉시, 이후 1시간 간격).
+    """
+    count = len(articles)
+    telegram_service.send_message(
+        f"⚙️ <b>{count}개 기사 처리 시작</b>\n"
+        f"콘텐츠 생성 중... (기사당 약 1~2분)"
+    )
+
+    # Step 1: 저장 + 생성 (순차)
+    generated = []  # [(article_id, notion_page_id, title, result), ...]
+    for art in articles:
+        article_id, notion_page_id = _save_article_to_db(art)
+        if article_id is None:
+            continue
+        result = _generate_content(article_id, notion_page_id, art["url"], art["title"])
+        if result:
+            generated.append((article_id, notion_page_id, art["title"], result))
+
+    if not generated:
+        telegram_service.send_message("❌ 생성된 콘텐츠가 없습니다.")
+        return
+
+    # Step 2: 발행 스케줄 안내
+    now = datetime.now()
+    lines = [f"✅ <b>{len(generated)}개 생성 완료! 발행 스케줄:</b>"]
+    for i, (_, _, title, _) in enumerate(generated):
+        pub_time = now + timedelta(hours=i)
+        tag = "즉시" if i == 0 else f"{i}시간 후 ({pub_time.strftime('%H:%M')})"
+        lines.append(f"  {i + 1}. {tag} — {title[:35]}")
+    telegram_service.send_message("\n".join(lines))
+
+    # Step 3: 발행 (1번 즉시, 이후 1시간 간격)
+    for i, (article_id, notion_page_id, title, result) in enumerate(generated):
+        delay_sec = i * 3600
+        if delay_sec == 0:
+            _publish_generated(article_id, notion_page_id, title, result, publish_index=0)
+        else:
+            t = threading.Timer(
+                delay_sec,
+                _publish_generated,
+                args=[article_id, notion_page_id, title, result, i],
+            )
+            t.daemon = True
+            t.start()
+            print(f"[scheduler] {title[:30]} → {delay_sec // 3600}시간 후 발행 예약")
 
 
 # ── 수동 URL 포스팅 ───────────────────────────────────────────────────────────
@@ -193,7 +273,7 @@ def _process_manual_url(url: str) -> None:
             con.execute(
                 """INSERT OR IGNORE INTO articles
                    (url, url_hash, title, source, status)
-                   VALUES (?,?,'수동입력','manual','generating')""",
+                   VALUES (?,?,?,'manual','generating')""",
                 (url, url_hash, title),
             )
             row = con.execute(
@@ -334,7 +414,7 @@ def send_digest_job():
         return
     print(f"[scheduler] 다이제스트 발송 시작 ({datetime.now().isoformat()})")
     try:
-        articles = crawl_and_rank(limit_per_source=8, top_n=10)
+        articles = crawl_and_rank(limit_per_source=8, news_n=6, tips_n=4)
         if articles:
             telegram_service.send_digest(articles)
         else:
