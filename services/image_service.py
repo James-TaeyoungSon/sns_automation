@@ -50,9 +50,10 @@ def generate_blog_image(article_title: str, seo_keyword: str) -> str | None:
         resp = client.images.generate(
             model=cfg.OPENAI_IMAGE_MODEL,
             prompt=prompt,
-            size="1536x1024",   # 블로그 헤더용 가로형 (gpt-image-1 지원 사이즈)
-            quality="medium",   # low / medium / high
+            size="1024x1024",
+            quality="low",
             n=1,
+            timeout=60.0,
         )
         # gpt-image-1은 b64_json으로 반환
         img_b64 = resp.data[0].b64_json

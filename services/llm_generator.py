@@ -14,7 +14,7 @@ import re
 from openai import OpenAI
 
 from config import cfg
-from services.image_service import generate_blog_image, fetch_stock_image_urls
+from services.image_service import fetch_stock_image_urls
 
 _client: OpenAI | None = None
 
@@ -53,14 +53,14 @@ def _analyze(title: str, text: str) -> dict:
     client = _get_client()
     prompt = _ANALYZE_PROMPT.format(title=title, text=text[:3000])
     try:
-        resp = client.responses.create(
+        resp = client.chat.completions.create(
             model="gpt-4o-mini",
-            input=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
             temperature=0.2,
+            timeout=30.0,
         )
-        raw = getattr(resp, "output_text", "") or ""
-        raw = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
-        raw = re.sub(r"\s*```$", "", raw.strip())
+        raw = resp.choices[0].message.content or ""
         return json.loads(raw)
     except Exception:
         return {
@@ -76,7 +76,7 @@ def _analyze(title: str, text: str) -> dict:
 def _research_web(queries: list[str]) -> str:
     client = _get_client()
     results = []
-    for query in queries[:3]:
+    for query in queries[:2]:  # 3→2로 줄여 시간 단축
         try:
             resp = client.responses.create(
                 model="gpt-4o-mini",
@@ -88,12 +88,13 @@ def _research_web(queries: list[str]) -> str:
                         f"출처와 함께 핵심 내용을 한국어로 요약해줘: {query}"
                     ),
                 }],
+                timeout=45.0,
             )
             content = getattr(resp, "output_text", "") or ""
             if content:
                 results.append(f"[조사: {query}]\n{content}")
         except Exception as e:
-            results.append(f"[조사: {query}] 실패: {e}")
+            print(f"[llm_generator] 웹 리서치 실패 (건너뜀): {e}")
     return "\n\n".join(results)
 
 
@@ -165,6 +166,7 @@ def _generate_blogspot(title: str, article_text: str, research: str, seo_keyword
             ],
             response_format={"type": "json_object"},
             temperature=0.5,
+            timeout=120.0,
         )
         result = json.loads(resp.choices[0].message.content)
         return {
@@ -206,6 +208,7 @@ Threads 포스트를 작성해줘. BLOGSPOT_URL은 나중에 실제 URL로 교�
             ],
             response_format={"type": "json_object"},
             temperature=0.7,
+            timeout=30.0,
         )
         result = json.loads(resp.choices[0].message.content)
         threads_text = str(result.get("threads_text", "")).strip()
@@ -242,33 +245,26 @@ def generate_pair(
         if log_fn:
             log_fn(msg)
 
-    log("Step 1: SEO 키워드 및 리서치 쿼리 추출 중...")
+    log("① SEO 키워드 분석 중...")
     analysis = _analyze(article_title, article_text)
     seo_keyword = analysis.get("seo_keyword") or article_title[:20]
     queries = analysis.get("research_queries", [])
     image_query = analysis.get("image_query", "artificial intelligence")
+    log(f"키워드: {seo_keyword}")
 
-    log(f"SEO 키워드: {seo_keyword}")
-
-    log("Step 2: 웹 리서치 중...")
+    log("② 웹 리서치 중... (최대 90초)")
     research = _research_web(queries) if queries else ""
 
-    log("DALL-E 3 이미지 생성 중... (약 20-30초)")
-    dalle_url = generate_blog_image(article_title, seo_keyword)
-    if dalle_url:
-        image_urls = [dalle_url]
-        log(f"이미지 생성 완료: {dalle_url[:60]}...")
-    else:
-        log("DALL-E 실패 → Pexels 스톡 이미지로 대체")
-        image_urls = fetch_stock_image_urls(image_query, count=1)
+    log("③ Pexels 이미지 검색 중...")
+    image_urls = fetch_stock_image_urls(image_query, count=1)
 
-    log("Step 3a: Blogspot 장문 생성 중...")
+    log("④ 블로그 본문 작성 중...")
     blogspot = _generate_blogspot(article_title, article_text, research, seo_keyword, image_urls)
 
-    log("Step 3b: Threads 단문 생성 중...")
+    log("⑤ Threads 포스트 작성 중...")
     threads = _generate_threads(article_title, article_text, seo_keyword)
 
-    log("생성 완료!")
+    log("✅ 생성 완료!")
     return {
         "blogspot": blogspot,
         "threads": threads,
