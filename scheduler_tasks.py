@@ -79,11 +79,19 @@ def _generate_content(
         notion_store.update_status(notion_page_id, "생성중")
 
     try:
-        art = fetch_article(url)
+        try:
+            art = fetch_article(url)
+            article_title = art.title or title
+            article_text = art.text
+        except Exception as fetch_err:
+            print(f"[scheduler] fetch 실패 ({url[:60]}): {fetch_err} — 제목만으로 생성")
+            article_title = title
+            article_text = ""
+
         result = generate_pair(
             article_url=url,
-            article_title=art.title or title,
-            article_text=art.text,
+            article_title=article_title,
+            article_text=article_text,
             log_fn=lambda msg: print(f"  [{title[:20]}] {msg}"),
         )
 
@@ -257,8 +265,14 @@ def _process_manual_url(url: str) -> None:
     title = url  # 일단 URL로 초기화, fetch 후 교체
 
     try:
-        art = fetch_article(url)
-        title = art.title or url
+        try:
+            art = fetch_article(url)
+            title = art.title or url
+            manual_text = art.text
+        except Exception as fetch_err:
+            print(f"[scheduler] 수동 fetch 실패 ({url[:60]}): {fetch_err} — 제목만으로 생성")
+            title = url
+            manual_text = ""
 
         with db_conn() as con:
             con.execute(
@@ -291,7 +305,7 @@ def _process_manual_url(url: str) -> None:
         result = generate_pair(
             article_url=url,
             article_title=title,
-            article_text=art.text,
+            article_text=manual_text,
             log_fn=lambda msg: print(f"  [수동] {msg}"),
         )
 
