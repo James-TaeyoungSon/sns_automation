@@ -14,7 +14,7 @@ import re
 from openai import OpenAI
 
 from config import cfg
-from services.image_service import fetch_stock_image_urls
+from services.image_service import generate_blog_image, fetch_stock_image_urls
 
 _client: OpenAI | None = None
 
@@ -255,8 +255,13 @@ def generate_pair(
     log("② 웹 리서치 중... (최대 90초)")
     research = _research_web(queries) if queries else ""
 
-    log("③ Pexels 이미지 검색 중...")
-    image_urls = fetch_stock_image_urls(image_query, count=1)
+    log("③ AI 이미지 생성 중... (최대 60초)")
+    dalle_url = generate_blog_image(article_title, seo_keyword)
+    if dalle_url:
+        image_urls = [dalle_url]
+    else:
+        log("이미지 생성 실패 → Pexels 스톡 이미지 사용")
+        image_urls = fetch_stock_image_urls(image_query, count=1)
 
     log("④ 블로그 본문 작성 중...")
     blogspot = _generate_blogspot(article_title, article_text, research, seo_keyword, image_urls)
