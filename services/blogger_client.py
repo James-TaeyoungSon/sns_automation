@@ -5,6 +5,8 @@ Blogger API v3 클라이언트 — 서버사이드 OAuth2 (Flow, not InstalledAp
 """
 from __future__ import annotations
 
+import json
+
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import Flow
@@ -74,7 +76,7 @@ def get_service():
     if not raw:
         raise RuntimeError("Blogger OAuth 토큰 없음. /auth/google 에서 인증하세요.")
 
-    creds = Credentials.from_authorized_user_json(raw, SCOPES)
+    creds = Credentials.from_authorized_user_info(json.loads(raw), SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
         token_store.save(creds.to_json())
