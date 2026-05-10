@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}대시보드 — AI 포스팅 시스템{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>📰 기사 큐</h1>
+  <div class="header-actions">
+    <button class="btn btn-primary" onclick="triggerCrawl()">🔄 지금 크롤</button>
+    <button class="btn btn-secondary" onclick="triggerDigest()" title="Top10 기사를 Telegram으로 전송">📲 다이제스트 전송</button>
+  </div>
+</div>
+
+<div class="filter-tabs">
+  <a class="tab {% if status_filter == 'active' %}active{% endif %}" href="?status=active">활성</a>
+  <a class="tab {% if status_filter == 'new' %}active{% endif %}" href="?status=new">신규</a>
+  <a class="tab {% if status_filter == 'reviewed' %}active{% endif %}" href="?status=reviewed">검토됨</a>
+  <a class="tab {% if status_filter == 'generated' %}active{% endif %}" href="?status=generated">생성완료</a>
+  <a class="tab {% if status_filter == 'published' %}active{% endif %}" href="?status=published">발행됨</a>
+  <a class="tab {% if status_filter == 'all' %}active{% endif %}" href="?status=all">전체</a>
+</div>
+
+{% if articles %}
+<div class="article-list">
+  {% for a in articles %}
+  <div class="article-card status-{{ a.status }}">
+    <div class="article-meta">
+      <span class="badge badge-{{ a.status }}">{{ a.status }}</span>
+      <span class="source">{{ a.source }}</span>
+      <span class="date">{{ (a.fetched_at or '')[:16] }}</span>
+    </div>
+    <h3 class="article-title">
+      <a href="{{ url_for('article.detail', article_id=a.id) }}">{{ a.title }}</a>
+    </h3>
+    <div class="article-url">
+      <a href="{{ a.url }}" target="_blank" rel="noopener">원문 링크 ↗</a>
+    </div>
+    {% if a.error_msg %}
+      <div class="error-msg">⚠ {{ a.error_msg[:100] }}</div>
+    {% endif %}
+    <div class="article-actions">
+      {% if a.status == 'new' %}
+        <form method="POST" action="{{ url_for('dashboard.mark_reviewed', article_id=a.id) }}" style="display:inline">
+          <button type="submit" class="btn btn-sm btn-success">✓ 검토</button>
+        </form>
+      {% endif %}
+      <a class="btn btn-sm btn-secondary" href="{{ url_for('article.detail', article_id=a.id) }}">상세보기</a>
+      <form method="POST" action="{{ url_for('dashboard.dismiss', article_id=a.id) }}" style="display:inline">
+        <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('제외할까요?')">✕</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <p>기사가 없습니다. 크롤 버튼을 클릭해 최신 AI 뉴스를 가져오세요.</p>
+  <button class="btn btn-primary btn-lg" onclick="triggerCrawl()">🔄 뉴스 크롤 시작</button>
+</div>
+{% endif %}
+
+<div id="crawl-status" class="toast" style="display:none"></div>
+
+<script>
+async function triggerCrawl() {
+  const toast = document.getElementById('crawl-status');
+  toast.textContent = '크롤 중...';
+  toast.style.display = 'block';
+  try {
+    const resp = await fetch('/api/crawl', { method: 'POST' });
+    const data = await resp.json();
+    toast.textContent = `완료! ${data.inserted}개 신규 기사 추가됨`;
+    setTimeout(() => location.reload(), 1500);
+  } catch (e) {
+    toast.textContent = '크롤 실패: ' + e;
+  }
+}
+
+async function triggerDigest() {
+  const toast = document.getElementById('crawl-status');
+  toast.textContent = '크롤 & 스코어링 중...';
+  toast.style.display = 'block';
+  try {
+    const resp = await fetch('/api/digest', { method: 'POST' });
+    const data = await resp.json();
+    if (data.ok) {
+      toast.textContent = `✅ Telegram 발송 완료 (${data.count}개 기사)`;
+    } else {
+      toast.textContent = '❌ 발송 실패: ' + (data.error || '알 수 없는 오류');
+    }
+  } catch (e) {
+    toast.textContent = '오류: ' + e;
+  }
+}
+</script>
+{% endblock %}

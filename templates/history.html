@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}발행 이력 — AI 포스팅 시스템{% endblock %}
+
+{% block content %}
+<h1>📜 발행 이력</h1>
+
+{% if posts %}
+<table class="history-table">
+  <thead>
+    <tr>
+      <th>발행일</th>
+      <th>기사 제목</th>
+      <th>소스</th>
+      <th>Blogspot</th>
+      <th>Threads</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in posts %}
+    <tr>
+      <td>{{ (p.published_at or '')[:16] }}</td>
+      <td>
+        <a href="{{ url_for('article.detail', article_id=p.article_id) }}">
+          {{ p.title[:60] }}{% if p.title|length > 60 %}…{% endif %}
+        </a>
+      </td>
+      <td><span class="badge">{{ p.source }}</span></td>
+      <td>
+        {% if p.blogspot_ok %}
+          <a href="{{ p.blogspot_url }}" target="_blank" class="badge badge-success">발행됨 ↗</a>
+        {% else %}
+          <span class="badge badge-failed">실패</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if p.threads_ok %}
+          <span class="badge badge-success">발행됨</span>
+        {% else %}
+          <span class="badge badge-failed">실패</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+  <p>아직 발행된 포스트가 없습니다.</p>
+</div>
+{% endif %}
+{% endblock %}

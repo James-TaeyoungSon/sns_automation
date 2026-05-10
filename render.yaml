@@ -1,0 +1,56 @@
+services:
+  - type: web
+    name: blogspot-threads-posting
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    plan: free
+
+    disk:
+      name: data-disk
+      mountPath: /app/data
+      sizeGB: 1
+
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: THREADS_ACCESS_TOKEN
+        sync: false
+      - key: THREADS_USER_ID
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: BLOGGER_BLOG_URL
+        sync: false
+      - key: PEXELS_API_KEY
+        sync: false
+      - key: PIXABAY_API_KEY
+        sync: false
+      - key: IMGBB_API_KEY
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: FLASK_SECRET_KEY
+        sync: false
+      - key: NOTION_API_KEY
+        sync: false
+      - key: NOTION_ARTICLES_DB_ID
+        value: "323795a7282b802dac16e3a15ceb57f6"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: DIGEST_ENABLED
+        value: "true"
+      - key: CRAWL_INTERVAL_HOURS
+        value: "6"
+      - key: AUTO_POST_HOUR
+        value: "9"
+      - key: AUTO_POST_ENABLED
+        value: "false"
+      - key: DB_PATH
+        value: "/app/data/blog.db"

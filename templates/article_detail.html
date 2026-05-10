@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}{{ article.title[:50] }} — AI 포스팅 시스템{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <a class="btn btn-sm btn-secondary" href="{{ url_for('dashboard.index') }}">← 대시보드</a>
+  <h1>{{ article.title }}</h1>
+  <div class="article-meta-header">
+    <span class="badge badge-{{ article.status }}">{{ article.status }}</span>
+    <span>{{ article.source }}</span>
+    <a href="{{ article.url }}" target="_blank" rel="noopener">원문 ↗</a>
+  </div>
+</div>
+
+{% if post %}
+<div class="alert alert-success">
+  ✅ 발행 완료
+  {% if post.blogspot_url %} | <a href="{{ post.blogspot_url }}" target="_blank">Blogspot ↗</a>{% endif %}
+  {% if post.threads_post_id %} | Threads ID: {{ post.threads_post_id }}{% endif %}
+</div>
+{% endif %}
+
+<!-- 액션 버튼 -->
+<div class="action-bar">
+  {% if article.status not in ['published'] %}
+    <button class="btn btn-primary" onclick="startGenerate()">🪄 콘텐츠 생성</button>
+    {% if content %}
+      <button class="btn btn-success" onclick="startPublish()">🚀 발행</button>
+      <button class="btn btn-secondary" onclick="saveContent()">💾 저장</button>
+    {% endif %}
+  {% endif %}
+</div>
+
+<!-- 진행 로그 -->
+<div id="job-log" class="job-log" style="display:none">
+  <div class="log-header">진행 상황</div>
+  <div id="log-lines"></div>
+</div>
+
+<!-- 콘텐츠 편집 영역 -->
+{% if content %}
+<div class="content-panels">
+
+  <div class="panel">
+    <h2>📝 Blogspot 포스트</h2>
+    <div class="field-group">
+      <label>제목</label>
+      <input type="text" id="blogspot_title" class="input-full" value="{{ content.blogspot_title or '' }}">
+    </div>
+    <div class="field-group">
+      <label>본문 HTML</label>
+      <textarea id="blogspot_html" class="textarea-large" rows="20">{{ content.blogspot_html or '' }}</textarea>
+    </div>
+    <details>
+      <summary>HTML 미리보기</summary>
+      <div class="html-preview" id="blogspot_preview"></div>
+    </details>
+  </div>
+
+  <div class="panel">
+    <h2>🧵 Threads 포스트</h2>
+    <div class="field-group">
+      <label>텍스트 (<span id="threads-len">0</span>/480자)</label>
+      <textarea id="threads_text" class="textarea-medium" rows="8" maxlength="490">{{ content.threads_text or '' }}</textarea>
+    </div>
+    <p class="hint">※ BLOGSPOT_URL은 발행 시 실제 URL로 자동 교체됩니다.</p>
+    {% if content.seo_keyword %}
+      <p class="seo-badge">SEO 키워드: <strong>{{ content.seo_keyword }}</strong></p>
+    {% endif %}
+    {% if content.image_urls %}
+      <div class="image-preview" id="image-preview-area"></div>
+    {% endif %}
+  </div>
+
+</div>
+{% else %}
+<div class="empty-state">
+  <p>아직 생성된 콘텐츠가 없습니다. "콘텐츠 생성" 버튼을 클릭하세요.</p>
+</div>
+{% endif %}
+
+<script>
+const articleId = {{ article.id }};
+
+// 이미지 미리보기 렌더링
+const imagePreviewArea = document.getElementById('image-preview-area');
+{% if content and content.image_urls %}
+try {
+  const imageUrls = {{ content.image_urls | safe }};
+  if (imagePreviewArea && Array.isArray(imageUrls)) {
+    imageUrls.forEach(url => {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = '이미지';
+      imagePreviewArea.appendChild(img);
+    });
+  }
+} catch(e) {}
+{% endif %}
+
+// 글자 수 실시간 표시
+const threadsTA = document.getElementById('threads_text');
+const threadsLen = document.getElementById('threads-len');
+if (threadsTA) {
+  function updateLen() { threadsLen.textContent = threadsTA.value.length; }
+  threadsTA.addEventListener('input', updateLen);
+  updateLen();
+}
+
+// HTML 미리보기 연동
+const blogspotHTML = document.getElementById('blogspot_html');
+const preview = document.getElementById('blogspot_preview');
+if (blogspotHTML && preview) {
+  blogspotHTML.addEventListener('input', () => {
+    preview.innerHTML = blogspotHTML.value;
+  });
+  preview.innerHTML = blogspotHTML.value;
+}
+
+async function startJob(endpoint) {
+  const logDiv = document.getElementById('job-log');
+  const logLines = document.getElementById('log-lines');
+  logDiv.style.display = 'block';
+  logLines.innerHTML = '<div class="log-line">시작...</div>';
+
+  const resp = await fetch(`/article/${articleId}/${endpoint}`, { method: 'POST' });
+  const data = await resp.json();
+  if (!data.ok) {
+    logLines.innerHTML += `<div class="log-line error">${data.error}</div>`;
+    return;
+  }
+  const jobId = data.job_id;
+  pollJob(jobId, logLines);
+}
+
+function startGenerate() { startJob('generate'); }
+function startPublish() { startJob('publish'); }
+
+async function pollJob(jobId, logLines) {
+  let lastLogCount = 0;
+  const interval = setInterval(async () => {
+    const resp = await fetch(`/job/${jobId}`);
+    const data = await resp.json();
+    if (data.logs && data.logs.length > lastLogCount) {
+      data.logs.slice(lastLogCount).forEach(msg => {
+        const div = document.createElement('div');
+        div.className = 'log-line';
+        div.textContent = msg;
+        logLines.appendChild(div);
+        lastLogCount++;
+      });
+    }
+    if (data.status === 'done') {
+      clearInterval(interval);
+      const div = document.createElement('div');
+      div.className = 'log-line success';
+      div.textContent = '완료! 페이지를 새로고침합니다...';
+      logLines.appendChild(div);
+      setTimeout(() => location.reload(), 1500);
+    } else if (data.status === 'error') {
+      clearInterval(interval);
+      const div = document.createElement('div');
+      div.className = 'log-line error';
+      div.textContent = '오류가 발생했습니다. 페이지를 새로고침합니다.';
+      logLines.appendChild(div);
+      setTimeout(() => location.reload(), 2000);
+    }
+  }, 1000);
+}
+
+async function saveContent() {
+  const data = {
+    blogspot_title: document.getElementById('blogspot_title').value,
+    blogspot_html: document.getElementById('blogspot_html').value,
+    threads_text: document.getElementById('threads_text').value,
+  };
+  const resp = await fetch(`/article/${articleId}/save-content`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const result = await resp.json();
+  alert(result.ok ? '저장 완료!' : '저장 실패');
+}
+</script>
+{% endblock %}

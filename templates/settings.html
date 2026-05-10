@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}설정 — AI 포스팅 시스템{% endblock %}
+
+{% block content %}
+<h1>⚙️ 설정</h1>
+
+<!-- Google Blogger 인증 상태 -->
+<div class="settings-section">
+  <h2>Google Blogger 인증</h2>
+  {% if blogger_authed %}
+    <div class="alert alert-success">✅ 인증됨</div>
+    <form method="POST" action="{{ url_for('settings.revoke_google') }}" style="display:inline">
+      <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('인증을 취소할까요?')">인증 취소</button>
+    </form>
+  {% else %}
+    <div class="alert alert-error">❌ 미인증 — 아래 버튼으로 Google 인증을 완료하세요.</div>
+    <a class="btn btn-primary" href="{{ url_for('auth.google_login') }}">Google 계정으로 인증</a>
+    <p class="hint">OAuth 리디렉션 URI: <code>{{ oauth_redirect_uri }}</code><br>
+    Google Cloud Console &gt; 사용자 인증 정보 &gt; OAuth 2.0 클라이언트 ID에 위 URI를 등록하세요.</p>
+  {% endif %}
+</div>
+
+<!-- API 키 설정 -->
+<form method="POST" action="{{ url_for('settings.settings_save') }}">
+  <div class="settings-section">
+    <h2>API 키</h2>
+    {% set key_labels = {
+      'OPENAI_API_KEY': 'OpenAI API Key',
+      'THREADS_ACCESS_TOKEN': 'Threads Access Token',
+      'THREADS_USER_ID': 'Threads User ID',
+      'GOOGLE_CLIENT_ID': 'Google Client ID',
+      'GOOGLE_CLIENT_SECRET': 'Google Client Secret',
+      'BLOGGER_BLOG_URL': 'Blogspot 블로그 URL (예: https://yourblog.blogspot.com)',
+      'PEXELS_API_KEY': 'Pexels API Key',
+      'PIXABAY_API_KEY': 'Pixabay API Key',
+      'IMGBB_API_KEY': 'ImgBB API Key',
+    } %}
+    {% for key, label in key_labels.items() %}
+    <div class="field-group">
+      <label>{{ label }}</label>
+      <input type="{% if 'SECRET' in key or 'TOKEN' in key or 'KEY' in key %}password{% else %}text{% endif %}"
+             name="{{ key }}"
+             class="input-full"
+             placeholder="{{ settings[key] and '●●●●●●●●' or '(미설정)' }}"
+             autocomplete="off">
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="settings-section">
+    <h2>앱 설정</h2>
+    {% set app_keys = {
+      'APP_BASE_URL': '앱 기본 URL (Render 배포 URL)',
+      'CRAWL_INTERVAL_HOURS': '뉴스 크롤 주기 (시간)',
+      'AUTO_POST_HOUR': '자동 발행 시각 (KST, 0-23)',
+      'ADMIN_TOKEN': '관리자 토큰 (선택)',
+    } %}
+    {% for key, label in app_keys.items() %}
+    <div class="field-group">
+      <label>{{ label }}</label>
+      <input type="text" name="{{ key }}" class="input-full"
+             value="{{ settings[key] }}" placeholder="{{ label }}">
+    </div>
+    {% endfor %}
+    <div class="field-group">
+      <label>자동 발행 활성화</label>
+      <select name="AUTO_POST_ENABLED" class="input-full">
+        <option value="false" {% if settings['AUTO_POST_ENABLED'] != 'true' %}selected{% endif %}>비활성 (수동 발행)</option>
+        <option value="true" {% if settings['AUTO_POST_ENABLED'] == 'true' %}selected{% endif %}>활성 (자동 발행)</option>
+      </select>
+    </div>
+  </div>
+
+  <button type="submit" class="btn btn-primary btn-lg">💾 설정 저장</button>
+</form>
+{% endblock %}

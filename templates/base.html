@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}AI 포스팅 시스템{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <nav class="navbar">
+    <a class="nav-brand" href="{{ url_for('dashboard.index') }}">🤖 AI 포스팅</a>
+    <div class="nav-links">
+      <a href="{{ url_for('dashboard.index') }}">대시보드</a>
+      <a href="{{ url_for('history.history_page') }}">발행 이력</a>
+      <a href="{{ url_for('settings.settings_page') }}">설정</a>
+    </div>
+  </nav>
+
+  <div class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for cat, msg in messages %}
+          <div class="alert alert-{{ cat }}">{{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </div>
+
+  <script>
+    // 알림 자동 닫기
+    setTimeout(() => {
+      document.querySelectorAll('.alert').forEach(el => el.style.display = 'none');
+    }, 5000);
+  </script>
+</body>
+</html>

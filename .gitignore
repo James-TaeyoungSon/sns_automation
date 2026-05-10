@@ -1,0 +1,8 @@
+.env
+.env.api_keys
+data/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+blogger_token.json
