@@ -53,7 +53,7 @@ def generate_blog_image(article_title: str, seo_keyword: str) -> str | None:
             size="1024x1024",
             quality="low",
             n=1,
-            timeout=60.0,
+            timeout=120.0,
         )
         # gpt-image-1은 b64_json으로 반환
         img_b64 = resp.data[0].b64_json
