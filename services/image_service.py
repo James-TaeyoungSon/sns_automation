@@ -48,7 +48,7 @@ def generate_blog_image(article_title: str, seo_keyword: str) -> str | None:
         client = _get_client()
         print("[image_service] gpt-image-1 이미지 생성 중...")
         resp = client.images.generate(
-            model="gpt-image-1",
+            model=cfg.OPENAI_IMAGE_MODEL,
             prompt=prompt,
             size="1536x1024",   # 블로그 헤더용 가로형 (gpt-image-1 지원 사이즈)
             quality="medium",   # low / medium / high
