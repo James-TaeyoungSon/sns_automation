@@ -29,3 +29,22 @@ def load() -> str | None:
 
 def exists() -> bool:
     return load() is not None
+
+
+def restore_from_env() -> bool:
+    """앱 시작 시 BLOGGER_TOKEN_B64 env var → 토큰 파일 복원. 이미 파일 있으면 스킵."""
+    path = cfg.TOKEN_FILE
+    if path.exists():
+        return True
+    b64 = os.getenv("BLOGGER_TOKEN_B64", "")
+    if not b64:
+        return False
+    try:
+        json_str = base64.b64decode(b64).decode("utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json_str, encoding="utf-8")
+        print("[token_store] BLOGGER_TOKEN_B64에서 토큰 복원 완료")
+        return True
+    except Exception as e:
+        print(f"[token_store] 토큰 복원 실패: {e}")
+        return False

@@ -4,6 +4,7 @@ from flask import Flask, jsonify
 
 from config import cfg
 from database import init_db
+from services import token_store as _token_store
 from blueprints.auth import bp as auth_bp
 from blueprints.dashboard import bp as dashboard_bp
 from blueprints.article import bp as article_bp
@@ -19,6 +20,9 @@ app.secret_key = cfg.FLASK_SECRET_KEY
 # DB 초기화
 with app.app_context():
     init_db()
+
+# BLOGGER_TOKEN_B64 환경변수에서 토큰 파일 복원 (Render 재시작 대응)
+_token_store.restore_from_env()
 
 # 블루프린트 등록
 app.register_blueprint(auth_bp)
