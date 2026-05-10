@@ -26,6 +26,7 @@ _CLIENT_CONFIG = {
 }
 
 _service_cache: object | None = None
+_pending_flows: dict[str, Flow] = {}  # state → Flow (PKCE code_verifier 보존용)
 
 
 def _build_flow(state: str | None = None) -> Flow:
@@ -39,22 +40,24 @@ def _build_flow(state: str | None = None) -> Flow:
 
 
 def get_authorization_url() -> tuple[str, str]:
-    """OAuth 인증 URL과 state 반환."""
+    """OAuth 인증 URL과 state 반환. Flow를 메모리에 보존해 PKCE 검증 통과."""
     flow = _build_flow()
     url, state = flow.authorization_url(
         access_type="offline",
         prompt="consent",
         include_granted_scopes="true",
     )
+    _pending_flows[state] = flow  # code_verifier 포함 flow 저장
     return url, state
 
 
 def exchange_code(code: str, state: str) -> Credentials:
     """인증 코드를 토큰으로 교환하고 저장."""
     global _service_cache
-    _service_cache = None  # 캐시 초기화
+    _service_cache = None
 
-    flow = _build_flow(state=state)
+    # 저장된 flow 재사용 (code_verifier 일치시켜야 PKCE 통과)
+    flow = _pending_flows.pop(state, None) or _build_flow(state=state)
     flow.fetch_token(code=code)
     creds = flow.credentials
     token_store.save(creds.to_json())
